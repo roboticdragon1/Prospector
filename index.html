@@ -149,6 +149,8 @@
       <label class="li"><input type="checkbox" id="lyrPins" checked> <span class="sw" style="background:#c8b88a"></span> My note pins</label>
     </div>
 
+    <p style="border-left:3px solid var(--tan);padding-left:10px"><b style="color:var(--tan)">Tap any spot on the map</b> to identify the land owner (public agency or private) and the geologic rock unit beneath it. These don't need the ownership/geology layers turned on, but they do need a connection.</p>
+
     <div id="minesKey" style="display:none;margin-top:10px;padding:10px;border:1px solid var(--line);border-radius:10px">
       <div class="meta" style="margin-bottom:6px">Mine &amp; mineral sites (USGS MRDS)</div>
       <div class="legend">
@@ -294,6 +296,19 @@ const geoLayer = L.tileLayer('https://tiles.macrostrat.org/carto/{z}/{x}/{y}.png
 // Land ownership / surface-management agency (BLM SMA, cached tiles, includes Private/Unknown)
 const SMA_URL = 'https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_Cached_with_PriUnk/MapServer/tile/{z}/{y}/{x}';
 const smaLayer = L.tileLayer(SMA_URL, { opacity:0.45, maxZoom:19, attribution:'Surface management: BLM SMA' });
+// Point identify on the same BLM SMA service (returns the managing agency at a coordinate).
+const SMA_IDENTIFY = 'https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_Cached_with_PriUnk/MapServer/identify';
+// Macrostrat point query → geologic unit name / age / lithology / description at a coordinate.
+const GEO_API = 'https://macrostrat.org/api/v2/geologic_units/map';
+// ADMIN_AGENCY_CODE → readable owner. Anything not federal (or PVT/blank) is treated as private/unknown.
+const SMA_AGENCY = {
+  BLM:'Bureau of Land Management', USFS:'US Forest Service', FS:'US Forest Service',
+  NPS:'National Park Service', FWS:'US Fish & Wildlife Service', USFW:'US Fish & Wildlife Service',
+  BIA:'Bureau of Indian Affairs (Tribal)', BOR:'Bureau of Reclamation', DOD:'Department of Defense',
+  DOE:'Department of Energy', TVA:'Tennessee Valley Authority', USACE:'US Army Corps of Engineers',
+  STATE:'State', SLB:'State', LG:'Local government', LOCAL:'Local government',
+  OTHER:'Other federal', PVT:'Private or unknown'
+};
 
 let currentBase = 'topo';
 function setBase(key){
@@ -387,6 +402,71 @@ function minePopup(f, layer){
     `<br><span style="color:${active?MINE_ORANGE:MINE_BLUE}">${active?'Active / producing':'Historic — not producing'}</span>`+
     (url? `<br><a href="${esc(url)}" target="_blank" rel="noopener">USGS record ↗</a>`:'')
   );
+}
+
+/* ---- Tap-to-identify: land owner + geology -------------- */
+// Land ownership from the BLM SMA service (the "Land ownership" layer's source data).
+async function fetchOwner(latlng){
+  const b=map.getBounds(), s=map.getSize();
+  const params=new URLSearchParams({
+    geometry: JSON.stringify({ x:latlng.lng, y:latlng.lat }),
+    geometryType:'esriGeometryPoint', sr:'4326',
+    layers:'visible:1', tolerance:'2',
+    mapExtent:[b.getWest(),b.getSouth(),b.getEast(),b.getNorth()].join(','),
+    imageDisplay:`${s.x},${s.y},96`, returnGeometry:'false', f:'json'
+  });
+  const r=await fetch(SMA_IDENTIFY+'?'+params.toString());
+  if(!r.ok) throw new Error('HTTP '+r.status);
+  const j=await r.json();
+  return (j.results && j.results[0]) ? j.results[0].attributes : null;
+}
+// Geologic unit from Macrostrat (the "Geology" layer's source data); first result is most detailed.
+async function fetchGeology(latlng){
+  const r=await fetch(`${GEO_API}?lat=${latlng.lat}&lng=${latlng.lng}`);
+  if(!r.ok) throw new Error('HTTP '+r.status);
+  const j=await r.json();
+  const d=j && j.success && j.success.data;
+  return (d && d.length) ? d[0] : null;
+}
+function ownerHtml(a){
+  if(!a) return '<b>Land owner</b><br><span class="pininfo">No ownership data here</span>';
+  const code=String(a.ADMIN_AGENCY_CODE||'').toUpperCase();
+  const isPrivate = !code || code==='PVT';
+  const name = SMA_AGENCY[code] || (code? code : 'Private or unknown');
+  const unit = (a.ADMIN_UNIT_NAME && a.ADMIN_UNIT_NAME!=='Null') ? ' · '+esc(a.ADMIN_UNIT_NAME) : '';
+  const st   = (a.ADMIN_ST && a.ADMIN_ST!=='Null') ? ' ('+esc(a.ADMIN_ST)+')' : '';
+  const tag  = isPrivate ? 'Private / unknown' : 'Public land';
+  const col  = isPrivate ? '#c8b88a' : '#7fc99a';
+  return `<b>Land owner</b><br><span style="color:${col}">${tag} — ${esc(name)}</span>${unit}${st}`;
+}
+function geoHtml(g){
+  if(!g) return '<b>Geology</b><br><span class="pininfo">No mapped unit here</span>';
+  const name=g.name||g.strat_name||'Unnamed unit';
+  const age=g.best_int_name||g.b_int_name||'';
+  const range=(g.b_age!=null&&g.t_age!=null)? ` · ${g.b_age}–${g.t_age} Ma` : '';
+  const lith=g.lith? `<br><span class="pininfo">${esc(String(g.lith).replace(/[{}]/g,''))}</span>` : '';
+  const desc=g.descrip? `<br>${esc(g.descrip)}` : '';
+  return `<b>Geology</b><br><b style="color:var(--tan)">${esc(name)}</b>`+
+    (age? ` <span class="pininfo">${esc(age)}${range}</span>` : '')+ lith + desc;
+}
+let identifySeq=0;
+async function identifyAt(latlng){
+  const seq=++identifySeq;
+  const popup=L.popup({ maxWidth:280, autoPanPadding:[24,80] })
+    .setLatLng(latlng)
+    .setContent('<b>Identifying this spot…</b><br><span class="pininfo">land owner & geology</span>')
+    .openOn(map);
+  if(!navigator.onLine){
+    popup.setContent('<b>Identify needs a connection</b><br><span class="pininfo">Owner & geology load from BLM / Macrostrat online.</span>');
+    return;
+  }
+  const [owner,geo]=await Promise.allSettled([ fetchOwner(latlng), fetchGeology(latlng) ]);
+  if(seq!==identifySeq) return; // a newer tap superseded this one
+  const ownerPart = owner.status==='fulfilled' ? ownerHtml(owner.value)
+                  : '<b>Land owner</b><br><span class="pininfo">Lookup failed — tap again</span>';
+  const geoPart   = geo.status==='fulfilled' ? geoHtml(geo.value)
+                  : '<b>Geology</b><br><span class="pininfo">Lookup failed — tap again</span>';
+  popup.setContent(ownerPart+'<hr style="border:none;border-top:1px solid var(--line);margin:8px 0">'+geoPart);
 }
 
 let lastClaims=null, lastPlans=null;
@@ -633,9 +713,12 @@ $('#btnPin').onclick=()=>{
   toast(dropMode? 'Tap the map to drop a note pin':'Drop mode off');
 };
 map.on('click',e=>{
-  if(!dropMode) return;
-  dropMode=false; $('#btnPin').classList.remove('on');
-  dropLatLng=e.latlng; openPinEditor(null); dropLatLng=null;
+  if(dropMode){
+    dropMode=false; $('#btnPin').classList.remove('on');
+    dropLatLng=e.latlng; openPinEditor(null); dropLatLng=null;
+    return;
+  }
+  identifyAt(e.latlng);   // plain tap → identify land owner + geology at that point
 });
 
 /* ---- Offline save --------------------------------------- */
