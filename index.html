@@ -94,16 +94,12 @@
     box-shadow:0 6px 20px rgba(0,0,0,.5);display:none;max-width:84%}
   .toast.show{display:block}
   .pininfo{font-size:12px;color:var(--muted);font-family:var(--mono)}
-  /* On-map public-land owner labels (PAD-US). Centering transform goes on the inner
-     span so it doesn't fight Leaflet's inline positioning transform on the icon root. */
-  .owner-label{pointer-events:none}
-  .owner-label span{display:inline-block;transform:translate(-50%,-50%);
-    font:650 11px/1.15 var(--sans);color:#fff;white-space:nowrap;text-align:center;
-    text-shadow:0 0 3px #000,0 0 3px #000,0 0 4px #000,0 1px 2px #000}
   .leaflet-popup-content-wrapper{background:var(--surface);color:var(--text);border:1px solid var(--line)}
   .leaflet-popup-tip{background:var(--surface);border:1px solid var(--line)}
   .leaflet-popup-content{margin:10px 12px;font-size:13px}
   .leaflet-popup-content b{color:var(--tan)}
+  /* Cap the identify popup height (~500 chars) and scroll for the rest. */
+  .id-scroll{max-height:240px;overflow-y:auto;overscroll-behavior:contain}
   .progress{height:6px;background:var(--ink);border-radius:6px;overflow:hidden;margin-top:10px;border:1px solid var(--line)}
   .progress > i{display:block;height:100%;width:0;background:var(--amber);transition:width .2s}
   .pill{display:inline-block;font-family:var(--mono);font-size:10px;padding:2px 7px;border-radius:20px;border:1px solid var(--line);color:var(--muted);margin-left:6px}
@@ -149,7 +145,7 @@
     <div class="legend">
       <label class="li"><input type="checkbox" id="lyrClaims" checked> <span class="sw" style="background:#e8821e33;border-color:#e8821e"></span> Active mining claims <span class="pill">avoid</span></label>
       <label class="li"><input type="checkbox" id="lyrPlans" checked> <span class="sw" style="background:#d23b2e33;border-color:#d23b2e"></span> Active operations (Plans of Ops) <span class="pill">avoid</span></label>
-      <label class="li"><input type="checkbox" id="lyrSMA"> <span class="sw" style="background:linear-gradient(45deg,#e7d24a,#5a9e6f)"></span> Land ownership — colors + names (Forest, State Trust…)</label>
+      <label class="li"><input type="checkbox" id="lyrSMA"> <span class="sw" style="background:linear-gradient(45deg,#e7d24a,#5a9e6f)"></span> Land ownership (who manages the surface)</label>
       <label class="li"><input type="checkbox" id="lyrGeo"> <span class="sw" style="background:linear-gradient(45deg,#7e6,#69c)"></span> Geology (rock units)</label>
       <label class="li"><input type="checkbox" id="lyrMines"> <span class="sw" style="background:radial-gradient(circle,#3d8fd1 55%,#fff 60%),radial-gradient(circle,#e8821e 55%,#fff 60%)"></span> Mine &amp; mineral sites (USGS) <span class="pill">info</span></label>
       <label class="li"><input type="checkbox" id="lyrPins" checked> <span class="sw" style="background:#c8b88a"></span> My note pins</label>
@@ -178,7 +174,7 @@
         <div class="li"><span class="sw" style="background:#d23b2e"></span> Dept. of Defense</div>
         <div class="li"><span class="sw" style="background:#ffffff;border-color:#888"></span> Private or unknown (no federal fill)</div>
       </div>
-      <p style="margin-top:8px">Named public lands (national forests, BLM districts, state trust lands, parks) are labeled on the map once you're zoomed in, and shown when you tap a spot. Source: USGS PAD-US. <b style="color:var(--tan)">Private parcels aren't named</b> — owner-name data for private land isn't public.</p>
+      <p style="margin-top:8px">The colored fill and boundary labels come from the BLM ownership layer. <b style="color:var(--tan)">Tap any spot</b> for the named public unit (national forest, BLM district, state trust land, park) from USGS PAD-US. <b style="color:var(--tan)">Private parcels aren't named</b> — owner-name data for private land isn't public.</p>
     </div>
 
     <p style="margin-top:14px">Claims load for the area on screen when you're zoomed in past ~town level. Pan, then tap <b>⟳ Claims</b> to refresh. Source: BLM Mineral &amp; Land Records System (MLRS) — the same official data The Diggings uses. Squares cover the claim's PLSS area and may be larger than the actual claim.</p>
@@ -298,11 +294,16 @@ L.control.zoom({ position:'topleft' }).addTo(map);
 map.attributionControl.setPosition('bottomleft');
 
 let baseLayer = L.tileLayer(BASE.topo.url, { maxNativeZoom:BASE.topo.max, maxZoom:19, attribution:BASE.topo.attr }).addTo(map);
+// maxNativeZoom: Macrostrat carto only has real tiles to ~z15 (z16+ are empty); Leaflet
+// upscales the z15 tile so the geology shading stays visible all the way to max zoom.
 const geoLayer = L.tileLayer('https://tiles.macrostrat.org/carto/{z}/{x}/{y}.png',
-  { opacity:0.5, maxZoom:19, attribution:'Geology: Macrostrat (USGS-derived)' });
+  { opacity:0.5, maxNativeZoom:15, maxZoom:19, attribution:'Geology: Macrostrat (USGS-derived)' });
 // Land ownership / surface-management agency (BLM SMA, cached tiles, includes Private/Unknown)
 const SMA_URL = 'https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_Cached_with_PriUnk/MapServer/tile/{z}/{y}/{x}';
-const smaLayer = L.tileLayer(SMA_URL, { opacity:0.45, maxZoom:19, attribution:'Surface management: BLM SMA' });
+// maxNativeZoom:14 — the BLM SMA cache only has tiles to z14 (z15+ return 404 and the
+// ownership shading vanishes). This makes Leaflet upscale the z14 tiles instead, so the
+// fill/labels keep rendering at full zoom.
+const smaLayer = L.tileLayer(SMA_URL, { opacity:0.45, maxNativeZoom:14, maxZoom:19, attribution:'Surface management: BLM SMA' });
 // USGS PAD-US "Manager Name" layer — the named public-lands database (Pike National Forest,
 // WY State Trust Lands, etc.). Fast point query (~0.3s); used for both the click popup and
 // the on-map ownership labels. A point with no PAD-US feature is unmanaged → private/unknown.
@@ -469,54 +470,6 @@ function geoHtml(g){
     (age? ` <span class="pininfo">${esc(age)}${range}</span>` : '')+ lith + desc;
 }
 
-/* ---- On-map public-land owner labels (PAD-US) ----------- */
-// Persistent name labels (Pike National Forest, WY State Trust Lands…) drawn when the
-// Land Ownership layer is on. Public ownership only — private parcels aren't named here.
-const ownerLabelLayer=L.layerGroup();
-// Rough label anchor: average of a polygon's outer ring (good enough for placing text).
-function labelPoint(g){
-  if(!g) return null;
-  let ring=null;
-  if(g.type==='Polygon') ring=g.coordinates[0];
-  else if(g.type==='MultiPolygon'){ let best=0; for(const poly of g.coordinates){ if(poly[0].length>best){ best=poly[0].length; ring=poly[0]; } } }
-  if(!ring||!ring.length) return null;
-  let x=0,y=0; for(const pt of ring){ x+=pt[0]; y+=pt[1]; }
-  return [y/ring.length, x/ring.length];
-}
-let ownerLabelsBusy=false;
-async function refreshOwnerLabels(){
-  if(!map.hasLayer(smaLayer)) return;                       // only with Land Ownership on
-  if(map.getZoom() < 11){ ownerLabelLayer.clearLayers(); return; } // too crowded zoomed out
-  if(!navigator.onLine || ownerLabelsBusy) return;
-  ownerLabelsBusy=true;
-  try{
-    const b=map.getBounds();
-    const params=new URLSearchParams({
-      where:'1=1',
-      geometry:[b.getWest(),b.getSouth(),b.getEast(),b.getNorth()].join(','),
-      geometryType:'esriGeometryEnvelope', inSR:'4326',
-      spatialRel:'esriSpatialRelIntersects',
-      outFields:'Unit_Nm,Own_Type', returnGeometry:'true', outSR:'4326',
-      maxAllowableOffset:'0.003', geometryPrecision:'5', f:'geojson'   // generalized = smaller/faster
-    });
-    const r=await fetch(PAD_QUERY+'?'+params.toString());
-    if(!r.ok) throw new Error('HTTP '+r.status);
-    const fc=await r.json();
-    ownerLabelLayer.clearLayers();
-    const seen=new Set();
-    for(const f of (fc.features||[])){
-      const p=f.properties||{}, ot=String(p.Own_Type||'').toUpperCase();
-      if(ot==='PVT'||ot==='NGO'||ot==='DESG') continue;     // public ownership names only
-      const name=p.Unit_Nm; if(!name || seen.has(name)) continue;
-      seen.add(name);                                        // one label per named unit in view
-      const c=labelPoint(f.geometry); if(!c) continue;
-      L.marker(c,{ interactive:false, keyboard:false,
-        icon:L.divIcon({ className:'owner-label', html:`<span>${esc(name)}</span>`, iconSize:null }) }).addTo(ownerLabelLayer);
-    }
-  }catch(e){ /* keep whatever labels are already shown */ }
-  finally{ ownerLabelsBusy=false; }
-}
-
 // Cache lookups by rounded coordinate so re-clicks are instant and a press-down can
 // start the request before the click lands. mousedown fires once per gesture, so
 // prefetching there costs at most one wasted lookup per pan.
@@ -552,7 +505,7 @@ async function identifyAt(latlng){
   // the slower BLM owner lookup (~0.9s), so the popup never waits on the slowest source.
   let ownerPart='<b>Land owner</b><br><span class="pininfo">Looking up…</span>';
   let geoPart  ='<b>Geology</b><br><span class="pininfo">Looking up…</span>';
-  const render=()=>{ if(seq===identifySeq) popup.setContent(ownerPart+'<hr style="border:none;border-top:1px solid var(--line);margin:8px 0">'+geoPart); };
+  const render=()=>{ if(seq===identifySeq) popup.setContent('<div class="id-scroll">'+ownerPart+'<hr style="border:none;border-top:1px solid var(--line);margin:8px 0">'+geoPart+'</div>'); };
   render();
   entry.owner.then(a=>{ ownerPart=ownerHtml(a); },
                    ()=>{ ownerPart='<b>Land owner</b><br><span class="pininfo">Lookup failed — tap again</span>'; }).then(render);
@@ -615,7 +568,7 @@ async function refreshClaims(){
   }finally{ loading=false; $('#btnReload').textContent='⟳ Claims'; }
 }
 $('#btnReload').onclick=refreshClaims;
-let moveT; map.on('moveend',()=>{ clearTimeout(moveT); moveT=setTimeout(()=>{ if(map.getZoom()>=11 && navigator.onLine){ refreshClaims(); refreshOwnerLabels(); } }, 700); });
+let moveT; map.on('moveend',()=>{ clearTimeout(moveT); moveT=setTimeout(()=>{ if(map.getZoom()>=11 && navigator.onLine) refreshClaims(); }, 700); });
 
 /* layer toggles */
 $('#lyrClaims').onchange=e=> e.target.checked? claimLayer.addTo(map):map.removeLayer(claimLayer);
@@ -634,10 +587,7 @@ $('#lyrSMA').onchange   =e=>{
   if(e.target.checked){ smaLayer.addTo(map); smaLayer.bringToFront();
     if(map.hasLayer(claimLayer)) claimLayer.bringToFront();
     if(map.hasLayer(planLayer)) planLayer.bringToFront();
-    ownerLabelLayer.addTo(map);                 // public-land name labels on top of the colors
-    if(map.getZoom() < 11) toast('Zoom in to see land-owner names');
-    refreshOwnerLabels();
-  } else { map.removeLayer(smaLayer); ownerLabelLayer.clearLayers(); map.removeLayer(ownerLabelLayer); }
+  } else { map.removeLayer(smaLayer); }
   $('#smaKey').style.display = e.target.checked? 'block':'none';
 };
 
