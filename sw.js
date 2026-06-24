@@ -5,7 +5,9 @@
      This is what makes a "saved" area render offline.
    - BLM ArcGIS claim queries: network-first, fall back to cache (handled mostly in the app).
 */
-const SHELL_CACHE = 'prospector-shell-v1';
+// Bump SHELL_CACHE whenever the app shell strategy changes — activate purges old shells,
+// so existing installs stop serving a stale index.html. (TILE_CACHE keeps saved maps.)
+const SHELL_CACHE = 'prospector-shell-v2';
 const TILE_CACHE  = 'prospector-tiles-v1';
 
 const SHELL_ASSETS = [
@@ -54,6 +56,22 @@ self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
+
+  // App HTML (page navigations + index.html): NETWORK-FIRST so a fresh deploy shows up
+  // immediately when online. Falls back to the cached shell only when offline.
+  if (req.mode === 'navigate' || url.pathname.endsWith('/index.html') ||
+      (url.origin === self.location.origin && url.pathname === '/')) {
+    event.respondWith((async () => {
+      try {
+        const res = await fetch(req);
+        if (res && res.ok) { const cache = await caches.open(SHELL_CACHE); cache.put('./index.html', res.clone()); }
+        return res;
+      } catch (e) {
+        return (await caches.match(req)) || (await caches.match('./index.html')) || Response.error();
+      }
+    })());
+    return;
+  }
 
   // Map tiles: cache-first (this is the offline magic).
   if (isTileRequest(url)) {
