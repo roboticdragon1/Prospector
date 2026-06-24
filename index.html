@@ -286,7 +286,7 @@ const BASE = {
 };
 
 /* ---- Map ------------------------------------------------- */
-const map = L.map('map', { zoomControl:false, attributionControl:true }).setView([39.01,-105.37], 12); // Lake George, CO area
+const map = L.map('map', { zoomControl:false, attributionControl:true, closePopupOnClick:false }).setView([39.01,-105.37], 12); // Lake George, CO area
 L.control.zoom({ position:'topleft' }).addTo(map);
 map.attributionControl.setPosition('bottomleft');
 
@@ -449,10 +449,30 @@ function geoHtml(g){
   return `<b>Geology</b><br><b style="color:var(--tan)">${esc(name)}</b>`+
     (age? ` <span class="pininfo">${esc(age)}${range}</span>` : '')+ lith + desc;
 }
+// Cache lookups by rounded coordinate so re-clicks are instant and a press-down can
+// start the request before the click lands. mousedown fires once per gesture, so
+// prefetching there costs at most one wasted lookup per pan.
+const idCache=new Map();
+const idKey=ll=> ll.lat.toFixed(4)+','+ll.lng.toFixed(4);
+function prefetchAt(latlng){
+  const key=idKey(latlng);
+  let entry=idCache.get(key);
+  if(!entry){
+    entry={ owner:fetchOwner(latlng), geo:fetchGeology(latlng) };
+    // drop failed lookups so a later tap retries instead of serving a cached error
+    const drop=()=>{ if(idCache.get(key)===entry) idCache.delete(key); };
+    entry.owner.catch(drop); entry.geo.catch(drop);
+    idCache.set(key,entry);
+    if(idCache.size>120) idCache.delete(idCache.keys().next().value); // cap memory
+  }
+  return entry;
+}
+
 let identifySeq=0;
 async function identifyAt(latlng){
   const seq=++identifySeq;
-  const popup=L.popup({ maxWidth:280, autoPanPadding:[24,80] })
+  const entry=prefetchAt(latlng);   // reuses the press-down request if there was one
+  const popup=L.popup({ maxWidth:280, autoPanPadding:[24,80], closeOnClick:false })
     .setLatLng(latlng)
     .setContent('<b>Identifying this spot…</b><br><span class="pininfo">land owner & geology</span>')
     .openOn(map);
@@ -460,7 +480,7 @@ async function identifyAt(latlng){
     popup.setContent('<b>Identify needs a connection</b><br><span class="pininfo">Owner & geology load from BLM / Macrostrat online.</span>');
     return;
   }
-  const [owner,geo]=await Promise.allSettled([ fetchOwner(latlng), fetchGeology(latlng) ]);
+  const [owner,geo]=await Promise.allSettled([ entry.owner, entry.geo ]);
   if(seq!==identifySeq) return; // a newer tap superseded this one
   const ownerPart = owner.status==='fulfilled' ? ownerHtml(owner.value)
                   : '<b>Land owner</b><br><span class="pininfo">Lookup failed — tap again</span>';
@@ -712,13 +732,22 @@ $('#btnPin').onclick=()=>{
   $('#btnPin').classList.toggle('on',dropMode);
   toast(dropMode? 'Tap the map to drop a note pin':'Drop mode off');
 };
+// Track whether a popup is open so a tap "outside the box" just closes it
+// instead of generating another one. (X button still closes it too.)
+let popupOpen=false;
+map.on('popupopen', ()=>{ popupOpen=true; });
+map.on('popupclose',()=>{ popupOpen=false; });
+// Start the lookup the moment the user presses down — overlaps the click + reading time.
+map.on('mousedown', e=>{ if(!dropMode && !popupOpen && navigator.onLine) prefetchAt(e.latlng); });
+
 map.on('click',e=>{
   if(dropMode){
     dropMode=false; $('#btnPin').classList.remove('on');
     dropLatLng=e.latlng; openPinEditor(null); dropLatLng=null;
     return;
   }
-  identifyAt(e.latlng);   // plain tap → identify land owner + geology at that point
+  if(popupOpen){ map.closePopup(); return; }  // tap outside an open box → just close it
+  identifyAt(e.latlng);                         // otherwise identify land owner + geology here
 });
 
 /* ---- Offline save --------------------------------------- */
