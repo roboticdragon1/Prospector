@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+<title>Prospector</title>
+<meta name="theme-color" content="#1a1d1a" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Prospector" />
+<link rel="apple-touch-icon" href="apple-touch-icon.png" />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  :root{
+    --ink:#1a1d1a; --surface:#24281f; --surface2:#2e3328;
+    --tan:#c8b88a; --text:#ece7da; --muted:#9aa08c;
+    --amber:#e8821e;     /* active claims (the orange squares) */
+    --red:#d23b2e;       /* active operations / plans */
+    --green:#5a9e6f;     /* open ground */
+    --line:#3c4233;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:var(--ink);color:var(--text);font-family:var(--sans);overscroll-behavior:none}
+  #map{position:absolute;inset:0;background:#0e100d}
+  .leaflet-container{background:#0e100d;font-family:var(--sans)}
+
+  /* ── Status banner: the signature element ───────────────── */
+  #status{
+    position:absolute;top:0;left:0;right:0;z-index:1000;
+    padding:calc(env(safe-area-inset-top) + 10px) 14px 10px;
+    display:flex;align-items:center;gap:10px;
+    background:linear-gradient(180deg,rgba(26,29,26,.96),rgba(26,29,26,.82));
+    border-bottom:1px solid var(--line);backdrop-filter:blur(6px);
+    transition:background .25s ease,border-color .25s ease;
+  }
+  #status .dot{width:14px;height:14px;border-radius:50%;background:var(--muted);flex:none;box-shadow:0 0 0 4px rgba(255,255,255,.06)}
+  #status .txt{font-weight:650;letter-spacing:.2px;font-size:15px;line-height:1.1}
+  #status .sub{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:2px;letter-spacing:.3px}
+  #status.open{background:linear-gradient(180deg,rgba(34,52,40,.96),rgba(26,29,26,.85));border-color:#3a5e46}
+  #status.open .dot{background:var(--green);box-shadow:0 0 0 4px rgba(90,158,111,.18)}
+  #status.claim{background:linear-gradient(180deg,rgba(64,44,18,.97),rgba(26,29,26,.85));border-color:#7a5a23}
+  #status.claim .dot{background:var(--amber);box-shadow:0 0 0 4px rgba(232,130,30,.22)}
+  #status.op{background:linear-gradient(180deg,rgba(64,26,22,.97),rgba(26,29,26,.85));border-color:#7e3128}
+  #status.op .dot{background:var(--red);box-shadow:0 0 0 4px rgba(210,59,46,.22)}
+  #status .right{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--muted);text-align:right;line-height:1.3}
+
+  /* ── Controls ───────────────────────────────────────────── */
+  .stack{position:absolute;right:12px;bottom:calc(env(safe-area-inset-bottom) + 96px);z-index:1000;display:flex;flex-direction:column;gap:10px}
+  .fab{width:52px;height:52px;border-radius:14px;border:1px solid var(--line);background:var(--surface);color:var(--text);
+    display:grid;place-items:center;font-size:22px;box-shadow:0 4px 14px rgba(0,0,0,.4);cursor:pointer;user-select:none}
+  .fab:active{transform:translateY(1px)}
+  .fab.on{background:var(--amber);color:#1a1d1a;border-color:var(--amber)}
+  .fab.gps.live{background:var(--green);color:#10160f;border-color:var(--green)}
+  .fab small{font-size:9px}
+
+  /* bottom bar */
+  #bar{position:absolute;left:0;right:0;bottom:0;z-index:1000;
+    padding:8px 10px calc(env(safe-area-inset-bottom) + 8px);
+    display:flex;gap:8px;background:linear-gradient(0deg,rgba(26,29,26,.97),rgba(26,29,26,.6));
+    border-top:1px solid var(--line);backdrop-filter:blur(6px)}
+  .seg{flex:1;display:flex;background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .seg button{flex:1;padding:9px 4px;background:none;border:none;color:var(--muted);font-size:11px;font-weight:600;font-family:var(--sans);cursor:pointer}
+  .seg button.sel{background:var(--surface2);color:var(--text)}
+  .barbtn{padding:9px 12px;border-radius:12px;border:1px solid var(--line);background:var(--surface);color:var(--text);font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap}
+
+  /* ── Panels / sheets ────────────────────────────────────── */
+  .sheet{position:absolute;inset:0;z-index:2000;background:rgba(10,12,9,.55);display:none;align-items:flex-end}
+  .sheet.show{display:flex}
+  .card{width:100%;max-height:86%;overflow:auto;background:var(--surface);border-top-left-radius:18px;border-top-right-radius:18px;
+    border-top:1px solid var(--line);padding:16px 16px calc(env(safe-area-inset-bottom) + 16px)}
+  .card h2{margin:.1em 0 .1em;font-size:18px}
+  .card h2 .eyebrow{display:block;font-family:var(--mono);font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--tan);font-weight:600;margin-bottom:4px}
+  .card p{color:var(--muted);font-size:13px;line-height:1.5}
+  .grip{width:38px;height:4px;border-radius:4px;background:var(--line);margin:2px auto 12px}
+  label.fld{display:block;font-size:12px;color:var(--muted);margin:12px 0 5px}
+  textarea,input[type=text]{width:100%;background:var(--ink);border:1px solid var(--line);color:var(--text);border-radius:10px;padding:10px;font-family:var(--sans);font-size:14px}
+  textarea{min-height:80px;resize:vertical}
+  .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+  .btn{flex:1;padding:12px;border-radius:12px;border:1px solid var(--line);background:var(--surface2);color:var(--text);font-weight:650;font-size:14px;cursor:pointer}
+  .btn.primary{background:var(--amber);color:#1a1d1a;border-color:var(--amber)}
+  .btn.danger{background:none;color:var(--red);border-color:#5e2a25}
+  .btn.ghost{background:none}
+  .thumbs{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .thumbs img{width:72px;height:72px;object-fit:cover;border-radius:10px;border:1px solid var(--line)}
+  .legend{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+  .legend .li{display:flex;align-items:center;gap:10px;font-size:13px}
+  .sw{width:16px;height:16px;border-radius:4px;flex:none;border:1px solid rgba(255,255,255,.25)}
+  .meta{font-family:var(--mono);font-size:12px;color:var(--tan)}
+  .toast{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom) + 150px);z-index:3000;
+    background:#10140e;border:1px solid var(--line);color:var(--text);padding:10px 14px;border-radius:12px;font-size:13px;
+    box-shadow:0 6px 20px rgba(0,0,0,.5);display:none;max-width:84%}
+  .toast.show{display:block}
+  .pininfo{font-size:12px;color:var(--muted);font-family:var(--mono)}
+  .leaflet-popup-content-wrapper{background:var(--surface);color:var(--text);border:1px solid var(--line)}
+  .leaflet-popup-tip{background:var(--surface);border:1px solid var(--line)}
+  .leaflet-popup-content{margin:10px 12px;font-size:13px}
+  .leaflet-popup-content b{color:var(--tan)}
+  .progress{height:6px;background:var(--ink);border-radius:6px;overflow:hidden;margin-top:10px;border:1px solid var(--line)}
+  .progress > i{display:block;height:100%;width:0;background:var(--amber);transition:width .2s}
+  .pill{display:inline-block;font-family:var(--mono);font-size:10px;padding:2px 7px;border-radius:20px;border:1px solid var(--line);color:var(--muted);margin-left:6px}
+  a{color:var(--tan)}
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<!-- Signature: live ground-status banner -->
+<div id="status" class="">
+  <div class="dot"></div>
+  <div>
+    <div class="txt" id="stxt">GPS off</div>
+    <div class="sub" id="ssub">Tap the crosshair to start locating</div>
+  </div>
+  <div class="right" id="sright"></div>
+</div>
+
+<!-- Right-side floating actions -->
+<div class="stack">
+  <div class="fab" id="btnLayers" title="Layers & legend">▤</div>
+  <div class="fab" id="btnOffline" title="Save area offline">⤓</div>
+  <div class="fab" id="btnPin" title="Drop a note pin">📍</div>
+  <div class="fab gps" id="btnGps" title="My location">◎</div>
+</div>
+
+<!-- Bottom bar: basemap selector + claims toggle -->
+<div id="bar">
+  <div class="seg" id="baseSeg">
+    <button data-base="topo" class="sel">Topo</button>
+    <button data-base="streets">Streets</button>
+    <button data-base="imagery">Imagery</button>
+  </div>
+  <button class="barbtn" id="btnReload" title="Refresh claims in view">⟳ Claims</button>
+</div>
+
+<!-- Layers sheet -->
+<div class="sheet" id="layersSheet">
+  <div class="card">
+    <div class="grip"></div>
+    <h2><span class="eyebrow">Map layers</span>What's on the map</h2>
+    <div class="legend">
+      <label class="li"><input type="checkbox" id="lyrClaims" checked> <span class="sw" style="background:#e8821e33;border-color:#e8821e"></span> Active mining claims <span class="pill">avoid</span></label>
+      <label class="li"><input type="checkbox" id="lyrPlans" checked> <span class="sw" style="background:#d23b2e33;border-color:#d23b2e"></span> Active operations (Plans of Ops) <span class="pill">avoid</span></label>
+      <label class="li"><input type="checkbox" id="lyrSMA"> <span class="sw" style="background:linear-gradient(45deg,#e7d24a,#5a9e6f)"></span> Land ownership (who manages the surface)</label>
+      <label class="li"><input type="checkbox" id="lyrGeo"> <span class="sw" style="background:linear-gradient(45deg,#7e6,#69c)"></span> Geology (rock units)</label>
+      <label class="li"><input type="checkbox" id="lyrMines"> <span class="sw" style="background:radial-gradient(circle,#3d8fd1 55%,#fff 60%),radial-gradient(circle,#e8821e 55%,#fff 60%)"></span> Mine &amp; mineral sites (USGS) <span class="pill">info</span></label>
+      <label class="li"><input type="checkbox" id="lyrPins" checked> <span class="sw" style="background:#c8b88a"></span> My note pins</label>
+    </div>
+
+    <div id="minesKey" style="display:none;margin-top:10px;padding:10px;border:1px solid var(--line);border-radius:10px">
+      <div class="meta" style="margin-bottom:6px">Mine &amp; mineral sites (USGS MRDS)</div>
+      <div class="legend">
+        <div class="li"><span class="sw" style="background:#3d8fd1;border-radius:50%"></span> Historic / non-producing site</div>
+        <div class="li"><span class="sw" style="background:#e8821e;border-radius:50%"></span> Active / producing</div>
+      </div>
+      <p style="margin-top:8px">Tap a dot for the minerals on record and a link to the full USGS report. <b style="color:var(--tan)">Heads up:</b> “historic” means <i>not currently producing</i> — it does <b>not</b> mean the ground is open to the public. Old mine sites can still sit on private land, patented claims, or under an active claim square. Check land ownership and active claims before visiting.</p>
+    </div>
+
+    <div id="smaKey" style="display:none;margin-top:10px;padding:10px;border:1px solid var(--line);border-radius:10px">
+      <div class="meta" style="margin-bottom:6px">Land ownership colors</div>
+      <div class="legend">
+        <div class="li"><span class="sw" style="background:#f2e25c"></span> BLM (public)</div>
+        <div class="li"><span class="sw" style="background:#5a9e6f"></span> US Forest Service</div>
+        <div class="li"><span class="sw" style="background:#b39ddb"></span> National Park Service</div>
+        <div class="li"><span class="sw" style="background:#e8821e"></span> Fish &amp; Wildlife</div>
+        <div class="li"><span class="sw" style="background:#7e6a4e"></span> Tribal / BIA</div>
+        <div class="li"><span class="sw" style="background:#8fb7d6"></span> State</div>
+        <div class="li"><span class="sw" style="background:#d23b2e"></span> Dept. of Defense</div>
+        <div class="li"><span class="sw" style="background:#ffffff;border-color:#888"></span> Private or unknown (no federal fill)</div>
+      </div>
+    </div>
+
+    <p style="margin-top:14px">Claims load for the area on screen when you're zoomed in past ~town level. Pan, then tap <b>⟳ Claims</b> to refresh. Source: BLM Mineral &amp; Land Records System (MLRS) — the same official data The Diggings uses. Squares cover the claim's PLSS area and may be larger than the actual claim.</p>
+
+    <p style="border-left:3px solid var(--amber);padding-left:10px"><b style="color:var(--amber)">Two ways a real claim can look missing.</b> The squares show <i>active</i> claims only. A historic mine that's been <i>closed</i> (e.g. the "Rainbow Lode" USGS record) won't show as a square — but the ground may still be claimed under a different owner's name. And a small number of BLM cases have no mapped boundary at all, so they appear in no polygon layer. When it matters, verify the exact spot 👇</p>
+
+    <div class="row"><button class="btn" id="btnVerifyHere">Verify this spot at the BLM</button></div>
+    <div class="row"><button class="btn ghost" data-close>Done</button></div>
+  </div>
+</div>
+
+<!-- Offline sheet -->
+<div class="sheet" id="offlineSheet">
+  <div class="card">
+    <div class="grip"></div>
+    <h2><span class="eyebrow">Before you lose signal</span>Save this area offline</h2>
+    <p>Downloads the current map view (and a few zoom levels in) plus the claims here, so the map and claim squares still work with no service. Stay zoomed to your trip area — saving a whole state isn't practical.</p>
+    <div id="offEstimate" class="meta" style="margin-top:8px"></div>
+    <div class="progress" id="offProg" style="display:none"><i></i></div>
+    <div class="row">
+      <button class="btn primary" id="btnSaveArea">Save this area</button>
+      <button class="btn ghost" id="btnClearTiles">Clear saved maps</button>
+    </div>
+    <div class="row"><button class="btn ghost" data-close>Done</button></div>
+  </div>
+</div>
+
+<!-- Verify sheet -->
+<div class="sheet" id="verifySheet">
+  <div class="card">
+    <div class="grip"></div>
+    <h2><span class="eyebrow">Ground truth</span>Verify this spot at the BLM</h2>
+    <p>The map's squares are a fast first look, not the legal record. Closed-but-reclaimed ground and ungeocoded cases won't show. Use these coordinates to check the official source before you rely on it.</p>
+    <div class="meta" id="verifyCoords" style="margin:6px 0 2px;font-size:14px"></div>
+    <div class="meta" id="verifyStatus" style="color:var(--muted)"></div>
+    <div class="row">
+      <button class="btn" id="btnCopyCoords">Copy coordinates</button>
+    </div>
+    <div class="row">
+      <a class="btn ghost" id="lnkMlrs" href="https://mlrs.blm.gov/s/" target="_blank" rel="noopener" style="text-align:center;text-decoration:none">BLM MLRS claim records ↗</a>
+    </div>
+    <div class="row">
+      <a class="btn ghost" id="lnkDiggings" href="https://thediggings.com/" target="_blank" rel="noopener" style="text-align:center;text-decoration:none">Open The Diggings ↗</a>
+    </div>
+    <div class="row"><button class="btn ghost" data-close>Done</button></div>
+  </div>
+</div>
+
+<!-- Pin editor sheet -->
+<div class="sheet" id="pinSheet">
+  <div class="card">
+    <div class="grip"></div>
+    <h2><span class="eyebrow" id="pinEyebrow">New note</span><span id="pinTitle">Log this spot</span></h2>
+    <div class="pininfo" id="pinCoords"></div>
+    <label class="fld">Note</label>
+    <textarea id="pinNote" placeholder="What did you find? Float, outcrop, access notes…"></textarea>
+    <label class="fld">Photos</label>
+    <input type="file" id="pinPhoto" accept="image/*" capture="environment" multiple />
+    <div class="thumbs" id="pinThumbs"></div>
+    <div class="row">
+      <button class="btn primary" id="pinSave">Save note</button>
+      <button class="btn danger" id="pinDelete" style="display:none">Delete</button>
+    </div>
+    <div class="row"><button class="btn ghost" data-close>Cancel</button></div>
+  </div>
+</div>
+
+<!-- Data sheet (backup) -->
+<div class="sheet" id="dataSheet">
+  <div class="card">
+    <div class="grip"></div>
+    <h2><span class="eyebrow">Your field notes</span>Back up &amp; restore</h2>
+    <p>Your pins and photos live on this device only. Export a backup before clearing app data or switching phones.</p>
+    <div class="row">
+      <button class="btn" id="btnExport">Export notes (.geojson)</button>
+      <label class="btn ghost" style="text-align:center">Import…<input type="file" id="importFile" accept=".json,.geojson,application/json" style="display:none"></label>
+    </div>
+    <div class="row"><button class="btn ghost" data-close>Done</button></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+/* ============================================================
+   Prospector — single-file field app
+   ============================================================ */
+const $ = s => document.querySelector(s);
+const toast = (msg, ms=2600) => { const t=$('#toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove('show'),ms); };
+
+/* ---- Data endpoints (public, no key) -------------------- */
+const ENDPOINTS = {
+  claims: 'https://gis.blm.gov/nlsdb/rest/services/HUB/BLM_Natl_MLRS_Mining_Claims_Not_Closed/FeatureServer/0/query',
+  plans:  'https://gis.blm.gov/nlsdb/rest/services/HUB/BLM_Natl_MLRS_Locatable_Plans_Of_Operations/FeatureServer/0/query',
+  // USGS MRDS (Mineral Resources Data System) — physical mine sites/prospects, point data w/ commodities.
+  mines:  'https://services.arcgis.com/v01gqwM5QqNysAAi/ArcGIS/rest/services/Mineral_Resources_Data_System_MRDS_Compact_Version/FeatureServer/0/query'
+};
+const CLAIM_FIELDS='CSE_NAME,CSE_DISP,CSE_NR,RCRD_ACRS,CSE_TYPE_NR,BLM_PROD,Created';
+const MINE_FIELDS='SITE_NAME,DEV_STAT,CODE_LIST,URL';
+// MRDS commodity codes → readable names (common metallic/industrial; unknown codes pass through).
+const COMMODITY={AU:'Gold',AG:'Silver',CU:'Copper',PB:'Lead',ZN:'Zinc',FE:'Iron',MO:'Molybdenum',
+  W:'Tungsten',U:'Uranium',SN:'Tin',HG:'Mercury',SB:'Antimony',AS:'Arsenic',MN:'Manganese',
+  CR:'Chromium',NI:'Nickel',CO:'Cobalt',PT:'Platinum',PD:'Palladium',TI:'Titanium',V:'Vanadium',
+  BE:'Beryllium',LI:'Lithium',REE:'Rare earths',F:'Fluorspar',BA:'Barite',P:'Phosphate',S:'Sulfur',
+  GEM:'Gemstone',CLAY:'Clay',GYP:'Gypsum',DIA:'Diamond',COAL:'Coal',AL:'Aluminum',BI:'Bismuth',
+  CD:'Cadmium',NB:'Niobium',TA:'Tantalum',TE:'Tellurium',ZR:'Zirconium',TH:'Thorium'};
+const BASE = {
+  topo:    { url:'https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}', attr:'USGS The National Map', max:16 },
+  streets: { url:'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attr:'© OpenStreetMap contributors', max:19 },
+  imagery: { url:'https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}', attr:'USGS The National Map: Imagery', max:16 }
+};
+
+/* ---- Map ------------------------------------------------- */
+const map = L.map('map', { zoomControl:false, attributionControl:true }).setView([39.01,-105.37], 12); // Lake George, CO area
+L.control.zoom({ position:'topleft' }).addTo(map);
+map.attributionControl.setPosition('bottomleft');
+
+let baseLayer = L.tileLayer(BASE.topo.url, { maxNativeZoom:BASE.topo.max, maxZoom:19, attribution:BASE.topo.attr }).addTo(map);
+const geoLayer = L.tileLayer('https://tiles.macrostrat.org/carto/{z}/{x}/{y}.png',
+  { opacity:0.5, maxZoom:19, attribution:'Geology: Macrostrat (USGS-derived)' });
+// Land ownership / surface-management agency (BLM SMA, cached tiles, includes Private/Unknown)
+const SMA_URL = 'https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_Cached_with_PriUnk/MapServer/tile/{z}/{y}/{x}';
+const smaLayer = L.tileLayer(SMA_URL, { opacity:0.45, maxZoom:19, attribution:'Surface management: BLM SMA' });
+
+let currentBase = 'topo';
+function setBase(key){
+  if(key===currentBase) return;
+  const b = BASE[key]; if(!b) return;
+  map.removeLayer(baseLayer);
+  baseLayer = L.tileLayer(b.url, { maxNativeZoom:b.max, maxZoom:19, attribution:b.attr });
+  baseLayer.addTo(map); baseLayer.bringToBack();
+  currentBase = key;
+  document.querySelectorAll('#baseSeg button').forEach(x=>x.classList.toggle('sel', x.dataset.base===key));
+}
+document.querySelectorAll('#baseSeg button').forEach(b=> b.onclick=()=>setBase(b.dataset.base));
+
+/* ---- Claim layers --------------------------------------- */
+const claimLayer = L.geoJSON(null, {
+  style:{ color:'#e8821e', weight:1.5, fillColor:'#e8821e', fillOpacity:0.18 },
+  onEachFeature: claimPopup
+}).addTo(map);
+const planLayer = L.geoJSON(null, {
+  style:{ color:'#d23b2e', weight:1.8, fillColor:'#d23b2e', fillOpacity:0.22 },
+  onEachFeature: planPopup
+}).addTo(map);
+// USGS MRDS mine sites (off by default; loads with claims when toggled on).
+const MINE_BLUE='#3d8fd1', MINE_ORANGE='#e8821e';
+const mineLayer = L.geoJSON(null, { pointToLayer: mineMarker, onEachFeature: minePopup });
+
+function fld(p, ...names){ for(const n of names){ if(p && p[n]!=null && p[n]!=='') return p[n]; } return null; }
+// Serial number is the reliable key for looking a case up in the official record.
+// Search-by-serial surfaces both the BLM MLRS record and The Diggings page for it.
+function moreInfoLink(cse){
+  if(!cse) return '';
+  const url='https://www.google.com/search?q='+encodeURIComponent('BLM mining claim '+cse);
+  return `<br><a href="${url}" target="_blank" rel="noopener">More info ↗</a>`;
+}
+function claimPopup(f, layer){
+  const p=f.properties||{};
+  const name=fld(p,'CSE_NAME','CSE_NM')||'Unnamed claim';
+  const kind=fld(p,'BLM_PROD');               // Lode Claim / Placer Claim / Mill Site / Tunnel Site
+  const disp=fld(p,'CSE_DISP')||'—';
+  const cse=fld(p,'CSE_NR','CSE_SERIAL_NR')||'';
+  const ac=fld(p,'RCRD_ACRS'); const acres= ac!=null? (Math.round(ac*10)/10)+' ac':'';
+  layer.bindPopup(
+    `<b>${esc(name)}</b>`+
+    (kind? `<br>Type: ${esc(kind)}`:'')+
+    `<br>Status: ${esc(disp)} ${acres?('· '+acres):''}`+
+    (cse? `<br><span class="pininfo">${esc(cse)}</span>`:'')+
+    `<br><span style="color:#e8821e">Active claim — avoid</span>`+
+    moreInfoLink(cse)
+  );
+}
+function planPopup(f, layer){
+  const p=f.properties||{};
+  const name=fld(p,'CSE_NAME')||'Mining operation';
+  const kind=fld(p,'BLM_PROD');
+  const disp=fld(p,'CSE_DISP')||'—';
+  const cse=fld(p,'CSE_NR','CSE_SERIAL_NR')||'';
+  layer.bindPopup(
+    `<b>${esc(name)}</b>`+
+    `<br>${kind? esc(kind):'Plan of Operations'} · ${esc(disp)}`+
+    (cse? `<br><span class="pininfo">${esc(cse)}</span>`:'')+
+    `<br><span style="color:#d23b2e">Active operation — avoid</span>`+
+    moreInfoLink(cse)
+  );
+}
+const esc = s => String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// ---- MRDS mine sites ----
+// "Producer" (or "Plant") = currently active/production. Everything else (Past Producer,
+// Prospect, Occurrence, Unknown) is historic / non-producing.
+function mineActive(dev){ const d=String(dev||'').trim().toLowerCase(); return d==='producer'||d==='plant'; }
+function commodities(codes){
+  if(!codes) return '';
+  return String(codes).trim().split(/\s+/).filter(Boolean).map(c=>COMMODITY[c.toUpperCase()]||c).join(', ');
+}
+function mineMarker(f, latlng){
+  const active=mineActive(f.properties&&f.properties.DEV_STAT);
+  return L.circleMarker(latlng,{ radius:6, weight:2, color:'#fff',
+    fillColor: active? MINE_ORANGE:MINE_BLUE, fillOpacity:.95 });
+}
+function minePopup(f, layer){
+  const p=f.properties||{};
+  const name=fld(p,'SITE_NAME')||'Mine site';
+  const dev=fld(p,'DEV_STAT')||'Unknown';
+  const comm=commodities(fld(p,'CODE_LIST'));
+  const url=fld(p,'URL');
+  const active=mineActive(dev);
+  layer.bindPopup(
+    `<b>${esc(name)}</b>`+
+    `<br>Status: ${esc(dev)}`+
+    (comm? `<br>Minerals: ${esc(comm)}`:'')+
+    `<br><span style="color:${active?MINE_ORANGE:MINE_BLUE}">${active?'Active / producing':'Historic — not producing'}</span>`+
+    (url? `<br><a href="${esc(url)}" target="_blank" rel="noopener">USGS record ↗</a>`:'')
+  );
+}
+
+let lastClaims=null, lastPlans=null;
+async function fetchLayer(endpoint, bounds, outFields){
+  const b=bounds||map.getBounds();
+  const env=[b.getWest(),b.getSouth(),b.getEast(),b.getNorth()].join(',');
+  const params=new URLSearchParams({
+    where:'1=1', geometry:env, geometryType:'esriGeometryEnvelope', inSR:'4326',
+    spatialRel:'esriSpatialRelIntersects', outFields:outFields||CLAIM_FIELDS,
+    returnGeometry:'true', outSR:'4326', f:'geojson'
+  });
+  const res=await fetch(endpoint+'?'+params.toString());
+  if(!res.ok) throw new Error('HTTP '+res.status);
+  return res.json();
+}
+// Drop MLRS records that are still "Filed" (never advanced to Active) AND are older than
+// 12 months. These are stale unprocessed filings unlikely to ever become active claims.
+// NOTE: We intentionally do NOT filter on QLTY=0 because Active claims can also have
+// QLTY=0 (low geometric precision) — filtering on that would drop legitimately staked ground.
+function filterMlrs(fc){
+  if(!fc||!fc.features) return fc;
+  const cutoff = (() => { const d=new Date(); d.setMonth(d.getMonth()-12); return d.getTime(); })();
+  fc.features = fc.features.filter(f => {
+    const p = f.properties||{};
+    const isFiled  = String(p.CSE_DISP||'').toLowerCase() === 'filed';
+    const oldFiling = p.Created!=null && Number(p.Created) < cutoff;
+    return !(isFiled && oldFiling);
+  });
+  return fc;
+}
+
+let loading=false;
+async function refreshClaims(){
+  if(loading) return;
+  if(map.getZoom() < 10){ toast('Zoom in to load claims for the area'); return; }
+  loading=true; $('#btnReload').textContent='…';
+  const wantMines=map.hasLayer(mineLayer);
+  try{
+    const bounds=map.getBounds();
+    const tasks=[ fetchLayer(ENDPOINTS.claims,bounds), fetchLayer(ENDPOINTS.plans,bounds) ];
+    if(wantMines) tasks.push(fetchLayer(ENDPOINTS.mines,bounds,MINE_FIELDS));
+    const r=await Promise.allSettled(tasks);
+    const c=r[0], p=r[1], m=wantMines? r[2]:null;
+    if(c.status==='fulfilled'){ lastClaims=filterMlrs(c.value); claimLayer.clearLayers(); claimLayer.addData(lastClaims); saveOfflineData('claims',lastClaims); }
+    if(p.status==='fulfilled'){ lastPlans=filterMlrs(p.value); planLayer.clearLayers(); planLayer.addData(lastPlans); saveOfflineData('plans',lastPlans); }
+    if(m && m.status==='fulfilled'){ mineLayer.clearLayers(); mineLayer.addData(m.value); saveOfflineData('mines',m.value); }
+    const n=(lastClaims?.features?.length||0);
+    toast(n? `${n} claim${n>1?'s':''} in view`: 'No active claims in this view');
+    if(lastPos) evaluatePosition(lastPos);
+  }catch(e){
+    toast('Could not reach BLM. Trying saved data…');
+    const oc=await loadOfflineData('claims'); if(oc){ claimLayer.clearLayers(); claimLayer.addData(oc); lastClaims=oc; }
+    const op=await loadOfflineData('plans'); if(op){ planLayer.clearLayers(); planLayer.addData(op); lastPlans=op; }
+    if(wantMines){ const om=await loadOfflineData('mines'); if(om){ mineLayer.clearLayers(); mineLayer.addData(om); } }
+  }finally{ loading=false; $('#btnReload').textContent='⟳ Claims'; }
+}
+$('#btnReload').onclick=refreshClaims;
+let moveT; map.on('moveend',()=>{ clearTimeout(moveT); moveT=setTimeout(()=>{ if(map.getZoom()>=11 && navigator.onLine) refreshClaims(); }, 700); });
+
+/* layer toggles */
+$('#lyrClaims').onchange=e=> e.target.checked? claimLayer.addTo(map):map.removeLayer(claimLayer);
+$('#lyrPlans').onchange =e=> e.target.checked? planLayer.addTo(map):map.removeLayer(planLayer);
+$('#lyrGeo').onchange   =e=> e.target.checked? geoLayer.addTo(map):map.removeLayer(geoLayer);
+$('#lyrPins').onchange  =e=> e.target.checked? pinGroup.addTo(map):map.removeLayer(pinGroup);
+$('#lyrMines').onchange =e=>{
+  $('#minesKey').style.display = e.target.checked? 'block':'none';
+  if(e.target.checked){
+    mineLayer.addTo(map);
+    if(navigator.onLine) refreshClaims();
+    else loadOfflineData('mines').then(om=>{ if(om){ mineLayer.clearLayers(); mineLayer.addData(om); } });
+  } else { map.removeLayer(mineLayer); }
+};
+$('#lyrSMA').onchange   =e=>{
+  if(e.target.checked){ smaLayer.addTo(map); smaLayer.bringToFront();
+    if(map.hasLayer(claimLayer)) claimLayer.bringToFront();
+    if(map.hasLayer(planLayer)) planLayer.bringToFront();
+  } else { map.removeLayer(smaLayer); }
+  $('#smaKey').style.display = e.target.checked? 'block':'none';
+};
+
+/* ---- GPS + ground-status banner ------------------------- */
+let watchId=null, meMarker=null, accCircle=null, lastPos=null;
+const statusEl=$('#status');
+function setStatus(kind, txt, sub){
+  statusEl.className=kind||'';
+  $('#stxt').textContent=txt; $('#ssub').textContent=sub||'';
+}
+function pointInRing(pt, ring){ // ray casting; pt=[lng,lat]
+  let inside=false;
+  for(let i=0,j=ring.length-1;i<ring.length;j=i++){
+    const xi=ring[i][0],yi=ring[i][1],xj=ring[j][0],yj=ring[j][1];
+    const hit=((yi>pt[1])!==(yj>pt[1])) && (pt[0] < (xj-xi)*(pt[1]-yi)/(yj-yi)+xi);
+    if(hit) inside=!inside;
+  }
+  return inside;
+}
+function pointInFeature(pt, geom){
+  if(!geom) return false;
+  if(geom.type==='Polygon'){
+    if(!pointInRing(pt,geom.coordinates[0])) return false;
+    for(let k=1;k<geom.coordinates.length;k++) if(pointInRing(pt,geom.coordinates[k])) return false;
+    return true;
+  }
+  if(geom.type==='MultiPolygon'){
+    for(const poly of geom.coordinates){
+      let inOuter=pointInRing(pt,poly[0]), inHole=false;
+      for(let k=1;k<poly.length;k++) if(pointInRing(pt,poly[k])) inHole=true;
+      if(inOuter&&!inHole) return true;
+    }
+  }
+  return false;
+}
+function hitName(fc, pt){
+  if(!fc||!fc.features) return null;
+  for(const f of fc.features){ if(pointInFeature(pt,f.geometry)) return fld(f.properties||{},'CSE_NAME')||'claim'; }
+  return null;
+}
+function evaluatePosition(pos){
+  const pt=[pos.lng,pos.lat];
+  const op=hitName(lastPlans,pt);
+  if(op){ setStatus('op','⚠ Active operation', `Inside: ${op}`); return; }
+  const cl=hitName(lastClaims,pt);
+  if(cl){ setStatus('claim','⚠ Active claim', `Inside: ${cl}`); return; }
+  setStatus('open','Open ground', lastClaims? 'No active claim at your location':'Claims not loaded here — tap ⟳ Claims');
+}
+function fmt(v,dir){ const d=Math.abs(v); return d.toFixed(5)+'° '+dir; }
+function onPos(p){
+  const {latitude:lat,longitude:lng,accuracy:acc}=p.coords;
+  lastPos={lat,lng};
+  const ll=[lat,lng];
+  if(!meMarker){
+    meMarker=L.circleMarker(ll,{radius:7,color:'#fff',weight:2,fillColor:'#5a9e6f',fillOpacity:1}).addTo(map);
+    accCircle=L.circle(ll,{radius:acc,color:'#5a9e6f',weight:1,fillColor:'#5a9e6f',fillOpacity:.08}).addTo(map);
+    map.setView(ll, Math.max(map.getZoom(),15));
+    if(navigator.onLine) refreshClaims();
+  }else{ meMarker.setLatLng(ll); accCircle.setLatLng(ll).setRadius(acc); }
+  $('#sright').innerHTML = `${fmt(lat, lat>=0?'N':'S')}<br>${fmt(lng, lng>=0?'E':'W')}<br>±${Math.round(acc)} m`;
+  evaluatePosition(lastPos);
+}
+function gpsToggle(){
+  const btn=$('#btnGps');
+  if(watchId!=null){ navigator.geolocation.clearWatch(watchId); watchId=null; btn.classList.remove('live'); setStatus('','GPS off','Tap the crosshair to start locating'); $('#sright').textContent=''; return; }
+  if(!navigator.geolocation){ toast('No geolocation on this device'); return; }
+  setStatus('','Locating…','Acquiring GPS fix');
+  watchId=navigator.geolocation.watchPosition(onPos,
+    err=>{ setStatus('','GPS error', err.message); toast('Location: '+err.message); btn.classList.remove('live'); watchId=null; },
+    { enableHighAccuracy:true, maximumAge:2000, timeout:20000 });
+  btn.classList.add('live');
+}
+$('#btnGps').onclick=gpsToggle;
+
+/* ---- IndexedDB (pins, photos, offline claim data) ------- */
+let db;
+function openIDB(name){ return new Promise((res,rej)=>{
+  const r=indexedDB.open(name,1);
+  r.onupgradeneeded=e=>{ const d=e.target.result;
+    if(!d.objectStoreNames.contains('pins')) d.createObjectStore('pins',{keyPath:'id'});
+    if(!d.objectStoreNames.contains('offline')) d.createObjectStore('offline',{keyPath:'key'});
+  };
+  r.onsuccess=e=>res(e.target.result);
+  r.onerror=()=>rej(r.error);
+});}
+function openDB(){ return openIDB('prospector').then(d=>{ db=d; return db; }); }
+function tx(store,mode){ return db.transaction(store,mode).objectStore(store); }
+function idbPut(store,val){ return new Promise((res,rej)=>{ const q=tx(store,'readwrite').put(val); q.onsuccess=()=>res(); q.onerror=()=>rej(q.error); }); }
+function idbGet(store,key){ return new Promise((res,rej)=>{ const q=tx(store,'readonly').get(key); q.onsuccess=()=>res(q.result); q.onerror=()=>rej(q.error); }); }
+function idbAll(store){ return new Promise((res,rej)=>{ const q=tx(store,'readonly').getAll(); q.onsuccess=()=>res(q.result||[]); q.onerror=()=>rej(q.error); }); }
+function idbDel(store,key){ return new Promise((res,rej)=>{ const q=tx(store,'readwrite').delete(key); q.onsuccess=()=>res(); q.onerror=()=>rej(q.error); }); }
+const saveOfflineData=(key,val)=> db? idbPut('offline',{key,val}):Promise.resolve();
+const loadOfflineData=async key=>{ if(!db) return null; const r=await idbGet('offline',key); return r? r.val:null; };
+
+// One-time migration from the pre-rename 'claimwatch' DB into 'prospector', run only while
+// the new DB is still empty. The old DB is left in place so its data can be checked before
+// being wiped manually.
+async function migrateFromClaimWatch(){
+  if(!db) return;
+  try{
+    if(indexedDB.databases){
+      const names=(await indexedDB.databases()).map(x=>x.name);
+      if(!names.includes('claimwatch')) return;
+    }
+    const [pins,offline]=await Promise.all([idbAll('pins'),idbAll('offline')]);
+    if(pins.length||offline.length) return;
+    const oldDb=await openIDB('claimwatch');
+    const oldAll=store=>new Promise((res,rej)=>{ const q=oldDb.transaction(store,'readonly').objectStore(store).getAll(); q.onsuccess=()=>res(q.result||[]); q.onerror=()=>rej(q.error); });
+    const [oldPins,oldOffline]=await Promise.all([oldAll('pins'),oldAll('offline')]);
+    for(const p of oldPins) await idbPut('pins',p);
+    for(const o of oldOffline) await idbPut('offline',o);
+    oldDb.close();
+    if(oldPins.length||oldOffline.length) console.info(`Prospector: migrated ${oldPins.length} pin(s) and ${oldOffline.length} offline record(s) from the old ClaimWatch database.`);
+  }catch(e){ console.warn('ClaimWatch migration failed',e); }
+}
+
+/* ---- Note pins ------------------------------------------ */
+const pinGroup=L.layerGroup().addTo(map);
+const pinIcon=L.divIcon({className:'',html:'<div style="font-size:24px;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6))">📍</div>',iconSize:[24,24],iconAnchor:[12,22]});
+let dropMode=false, editing=null, pendingPhotos=[];
+
+function renderPin(pin){
+  const m=L.marker([pin.lat,pin.lng],{icon:pinIcon}).addTo(pinGroup);
+  m.on('click',()=>openPinEditor(pin));
+  m._pinId=pin.id;
+}
+async function loadPins(){ pinGroup.clearLayers(); const pins=await idbAll('pins'); pins.forEach(renderPin); }
+
+function openPinEditor(pin){
+  editing = pin || null;
+  pendingPhotos = [];
+  $('#pinEyebrow').textContent = pin? 'Edit note':'New note';
+  $('#pinTitle').textContent = pin? 'Update this spot':'Log this spot';
+  const lat = pin? pin.lat : (dropLatLng? dropLatLng.lat : (lastPos? lastPos.lat:map.getCenter().lat));
+  const lng = pin? pin.lng : (dropLatLng? dropLatLng.lng : (lastPos? lastPos.lng:map.getCenter().lng));
+  editing = editing || { id:'p'+Date.now(), lat, lng, note:'', ts:Date.now(), photos:[] };
+  $('#pinCoords').textContent = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+  $('#pinNote').value = editing.note||'';
+  $('#pinDelete').style.display = pin? 'block':'none';
+  renderThumbs(editing.photos||[]);
+  showSheet('#pinSheet');
+}
+function renderThumbs(photos){
+  const wrap=$('#pinThumbs'); wrap.innerHTML='';
+  (photos||[]).forEach(blob=>{ const url=URL.createObjectURL(blob); const im=new Image(); im.src=url; wrap.appendChild(im); });
+}
+$('#pinPhoto').onchange=e=>{
+  const files=[...e.target.files];
+  pendingPhotos.push(...files);
+  renderThumbs([...(editing.photos||[]), ...pendingPhotos]);
+  e.target.value='';
+};
+$('#pinSave').onclick=async()=>{
+  editing.note=$('#pinNote').value.trim();
+  editing.photos=[...(editing.photos||[]), ...pendingPhotos];
+  editing.ts=Date.now();
+  await idbPut('pins',editing);
+  await loadPins(); hideSheets(); toast('Note saved');
+};
+$('#pinDelete').onclick=async()=>{
+  if(editing && editing.id){ await idbDel('pins',editing.id); await loadPins(); hideSheets(); toast('Note deleted'); }
+};
+let dropLatLng=null;
+$('#btnPin').onclick=()=>{
+  dropMode=!dropMode;
+  $('#btnPin').classList.toggle('on',dropMode);
+  toast(dropMode? 'Tap the map to drop a note pin':'Drop mode off');
+};
+map.on('click',e=>{
+  if(!dropMode) return;
+  dropMode=false; $('#btnPin').classList.remove('on');
+  dropLatLng=e.latlng; openPinEditor(null); dropLatLng=null;
+});
+
+/* ---- Offline save --------------------------------------- */
+function tilesForBounds(b, z){
+  const lat2tile=(lat,z)=>Math.floor((1-Math.log(Math.tan(lat*Math.PI/180)+1/Math.cos(lat*Math.PI/180))/Math.PI)/2*Math.pow(2,z));
+  const lng2tile=(lng,z)=>Math.floor((lng+180)/360*Math.pow(2,z));
+  const x1=lng2tile(b.getWest(),z), x2=lng2tile(b.getEast(),z);
+  const y1=lat2tile(b.getNorth(),z), y2=lat2tile(b.getSouth(),z);
+  const out=[];
+  for(let x=Math.min(x1,x2);x<=Math.max(x1,x2);x++) for(let y=Math.min(y1,y2);y<=Math.max(y1,y2);y++) out.push({x,y,z});
+  return out;
+}
+function buildTileUrls(){
+  const b=map.getBounds(); const z0=Math.max(map.getZoom(),11); const urls=[];
+  const baseDef=BASE[currentBase]; const maxN=baseDef.max;
+  const geoOn=map.hasLayer(geoLayer);
+  const smaOn=map.hasLayer(smaLayer);
+  for(let z=z0; z<=Math.min(z0+3, maxN+2); z++){
+    const tiles=tilesForBounds(b, Math.min(z,maxN));
+    for(const t of tiles){
+      const sub='abc'[(t.x+t.y)%3];
+      urls.push(baseDef.url.replace('{z}',t.z).replace('{y}',t.y).replace('{x}',t.x).replace('{s}',sub));
+      if(geoOn) urls.push('https://tiles.macrostrat.org/carto/'+t.z+'/'+t.x+'/'+t.y+'.png');
+      if(smaOn) urls.push(SMA_URL.replace('{z}',t.z).replace('{y}',t.y).replace('{x}',t.x));
+    }
+    if(urls.length>2500) break;
+  }
+  return [...new Set(urls)];
+}
+function updateEstimate(){
+  const n=buildTileUrls().length;
+  $('#offEstimate').textContent = `≈ ${n} map tiles for this view + the claims shown. Roughly ${Math.max(1,Math.round(n*18/1024))} MB.`;
+}
+let swReg=null;
+$('#btnSaveArea').onclick=async()=>{
+  if(!navigator.serviceWorker.controller){ toast('Offline cache needs the app served over https (see setup)'); return; }
+  const urls=buildTileUrls();
+  $('#offProg').style.display='block'; $('#offProg').firstElementChild.style.width='0%';
+  // ensure claims for this area are saved too
+  if(navigator.onLine) await refreshClaims();
+  navigator.serviceWorker.controller.postMessage({type:'CACHE_TILES',urls});
+  toast('Saving '+urls.length+' tiles…');
+};
+navigator.serviceWorker?.addEventListener?.('message',ev=>{
+  const d=ev.data||{};
+  if(d.type==='CACHE_PROGRESS'){ $('#offProg').firstElementChild.style.width=Math.round(d.done/d.total*100)+'%'; }
+  if(d.type==='CACHE_DONE'){ $('#offProg').firstElementChild.style.width='100%'; toast('Area saved for offline use ✓'); }
+});
+$('#btnClearTiles').onclick=()=>{ navigator.serviceWorker?.controller?.postMessage({type:'CLEAR_TILES'}); toast('Saved maps cleared'); };
+
+/* ---- Backup / restore ----------------------------------- */
+$('#btnExport').onclick=async()=>{
+  const pins=await idbAll('pins');
+  const fc={type:'FeatureCollection',features:pins.map(p=>({
+    type:'Feature', geometry:{type:'Point',coordinates:[p.lng,p.lat]},
+    properties:{ id:p.id, note:p.note, ts:new Date(p.ts).toISOString(), photos:(p.photos||[]).length }
+  }))};
+  const blob=new Blob([JSON.stringify(fc,null,2)],{type:'application/geo+json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+  a.download='prospector-notes-'+new Date().toISOString().slice(0,10)+'.geojson'; a.click();
+  toast('Exported '+pins.length+' notes (photos stay on device)');
+};
+$('#importFile').onchange=async e=>{
+  try{ const txt=await e.target.files[0].text(); const fc=JSON.parse(txt);
+    let n=0; for(const f of (fc.features||[])){ const c=f.geometry.coordinates;
+      await idbPut('pins',{id:f.properties.id||('p'+Date.now()+n), lat:c[1], lng:c[0], note:f.properties.note||'', ts:Date.parse(f.properties.ts)||Date.now(), photos:[]}); n++; }
+    await loadPins(); toast('Imported '+n+' notes');
+  }catch(err){ toast('Could not read that file'); }
+  e.target.value='';
+};
+
+/* ---- Sheets plumbing ------------------------------------ */
+function showSheet(sel){ hideSheets(); $(sel).classList.add('show'); }
+function hideSheets(){ document.querySelectorAll('.sheet').forEach(s=>s.classList.remove('show')); }
+document.querySelectorAll('[data-close]').forEach(b=>b.onclick=hideSheets);
+document.querySelectorAll('.sheet').forEach(s=> s.addEventListener('click',e=>{ if(e.target===s) hideSheets(); }));
+$('#btnLayers').onclick=()=>showSheet('#layersSheet');
+$('#btnOffline').onclick=()=>{ updateEstimate(); showSheet('#offlineSheet'); };
+
+/* ---- Verify this spot ----------------------------------- */
+function openVerify(){
+  const c = lastPos || map.getCenter();
+  const lat = lastPos? lastPos.lat : c.lat, lng = lastPos? lastPos.lng : c.lng;
+  $('#verifyCoords').textContent = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+  $('#verifyStatus').textContent = lastPos? 'From your GPS location' : 'From the center of the map';
+  $('#btnCopyCoords').dataset.ll = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+  showSheet('#verifySheet');
+}
+$('#btnVerifyHere').onclick=openVerify;
+$('#btnCopyCoords').onclick=async e=>{
+  const ll=e.target.dataset.ll||'';
+  try{ await navigator.clipboard.writeText(ll); toast('Coordinates copied'); }
+  catch(_){ toast(ll); }
+};
+// Tap the status banner to verify the exact ground under you
+$('#status').addEventListener('click',()=>{ if(watchId!=null) openVerify(); });
+// long-press the GPS button opens backup sheet
+let lp; $('#btnGps').addEventListener('touchstart',()=>{ lp=setTimeout(()=>showSheet('#dataSheet'),650); },{passive:true});
+$('#btnGps').addEventListener('touchend',()=>clearTimeout(lp));
+
+/* ---- Boot ----------------------------------------------- */
+window.addEventListener('online', ()=>{ toast('Back online'); });
+window.addEventListener('offline',()=>{ toast('Offline — using saved maps & claims'); });
+(async function init(){
+  try{ await openDB(); await migrateFromClaimWatch(); await loadPins(); }catch(e){ console.warn('IDB',e); }
+  if('serviceWorker' in navigator){
+    try{ swReg=await navigator.serviceWorker.register('sw.js'); }catch(e){ console.warn('SW',e); }
+  }
+  if(!navigator.onLine){
+    const oc=await loadOfflineData('claims'); if(oc){ claimLayer.addData(oc); lastClaims=oc; }
+    const op=await loadOfflineData('plans');  if(op){ planLayer.addData(op);  lastPlans=op; }
+    const om=await loadOfflineData('mines');  if(om && $('#lyrMines').checked){ mineLayer.addData(om).addTo(map); }
+    setStatus('','Offline','Using saved maps & claims');
+  }
+})();
+</script>
+</body>
+</html>
