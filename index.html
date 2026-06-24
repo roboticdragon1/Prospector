@@ -322,7 +322,15 @@ const PAD_AGENCY = {
   FWS:'US Fish & Wildlife Service', DOD:'Department of Defense', USBR:'Bureau of Reclamation',
   BOR:'Bureau of Reclamation', BIA:'Bureau of Indian Affairs', TVA:'Tennessee Valley Authority',
   DOE:'Department of Energy', USACE:'US Army Corps of Engineers', OTHF:'Other federal',
-  SDNR:'State', SDOL:'State Land Board', SFW:'State Fish & Wildlife', SPR:'State Parks'
+  SDNR:'State', SDOL:'State Land Board', SLB:'State Land Board', SFW:'State Fish & Wildlife', SPR:'State Parks'
+};
+// PAD-US Des_Tp code → readable designation overlay. These sit on top of the surface
+// ownership and usually carry their own access rules (a military training area or
+// Wilderness can close ground that the title-holder would otherwise leave open).
+const PAD_DESG = {
+  MIL:'Military area', WA:'Wilderness Area', WSA:'Wilderness Study Area',
+  NM:'National Monument', NRA:'National Recreation Area', SRMA:'Special Recreation Mgmt Area',
+  ACEC:'Area of Critical Environmental Concern', CONE:'Conservation Easement', RECMGMT:'Recreation Mgmt Area'
 };
 
 let currentBase = 'topo';
@@ -426,7 +434,7 @@ async function fetchOwner(latlng){
     geometry: JSON.stringify({ x:latlng.lng, y:latlng.lat }),
     geometryType:'esriGeometryPoint', inSR:'4326',
     spatialRel:'esriSpatialRelIntersects',
-    outFields:'Unit_Nm,Own_Type,Own_Name,Mang_Name,Loc_Ds',
+    outFields:'Unit_Nm,Own_Type,Own_Name,Mang_Name,Loc_Ds,Des_Tp',
     returnGeometry:'false', f:'json'
   });
   const r=await fetch(PAD_QUERY+'?'+params.toString());
@@ -434,8 +442,13 @@ async function fetchOwner(latlng){
   const j=await r.json();
   const fs=(j.features||[]).map(f=>f.attributes);
   if(!fs.length) return null;                  // no PAD-US unit here → private / unmapped
-  // Prefer an actual ownership unit over a designation overlay (Wilderness, Roadless, etc.).
-  return fs.find(a=>String(a.Own_Type||'').toUpperCase()!=='DESG') || fs[0];
+  const isDesg=a=>String(a.Own_Type||'').toUpperCase()==='DESG';
+  // The ownership unit (who holds title) is the headline; designation overlays
+  // (military training areas, Wilderness, etc.) sit on top and carry their own
+  // access rules, so we keep them and surface them as extra lines in the popup.
+  const owner=fs.find(a=>!isDesg(a));
+  const designations=fs.filter(isDesg);
+  return { owner: owner||null, designations };
 }
 // Geologic unit from Macrostrat (the "Geology" layer's source data); first result is most detailed.
 async function fetchGeology(latlng){
@@ -445,19 +458,37 @@ async function fetchGeology(latlng){
   const d=j && j.success && j.success.data;
   return (d && d.length) ? d[0] : null;
 }
-function ownerHtml(a){
-  if(!a) return '<b>Land owner</b><br><span style="color:#c8b88a">Private / unknown</span>'+
-               '<br><span class="pininfo">Not in the public-lands database</span>';
-  const ot   = String(a.Own_Type||'').toUpperCase();
-  const isPrivate = ot==='PVT' || ot==='NGO';
-  const cat  = PAD_OWN[ot] || 'Public land';
-  const agc  = String(a.Own_Name||a.Mang_Name||'').toUpperCase();
-  const agency = PAD_AGENCY[agc] ? ' · '+PAD_AGENCY[agc] : (agc ? ' · '+esc(agc) : '');
-  const unit = a.Unit_Nm ? `<br><b style="color:var(--tan)">${esc(a.Unit_Nm)}</b>` : '';
-  const desg = (a.Loc_Ds && !['','UNK'].includes(String(a.Loc_Ds).toUpperCase()))
-               ? `<br><span class="pininfo">${esc(a.Loc_Ds)}</span>` : '';
-  const col  = isPrivate ? '#c8b88a' : '#7fc99a';
-  return `<b>Land owner</b><br><span style="color:${col}">${esc(cat)}</span>${agency}${unit}${desg}`;
+function ownerHtml(res){
+  if(!res || (!res.owner && !(res.designations||[]).length))
+    return '<b>Land owner</b><br><span style="color:#c8b88a">Private / unknown</span>'+
+           '<br><span class="pininfo">Not in the public-lands database</span>';
+  const a = res.owner;
+  let head;
+  if(a){
+    const ot   = String(a.Own_Type||'').toUpperCase();
+    const isPrivate = ot==='PVT' || ot==='NGO';
+    const cat  = PAD_OWN[ot] || 'Public land';
+    const agc  = String(a.Own_Name||a.Mang_Name||'').toUpperCase();
+    const agency = PAD_AGENCY[agc] ? ' · '+PAD_AGENCY[agc] : (agc ? ' · '+esc(agc) : '');
+    const unit = a.Unit_Nm ? `<br><b style="color:var(--tan)">${esc(a.Unit_Nm)}</b>` : '';
+    const desc = (a.Loc_Ds && !['','UNK'].includes(String(a.Loc_Ds).toUpperCase()))
+                 ? `<br><span class="pininfo">${esc(a.Loc_Ds)}</span>` : '';
+    const col  = isPrivate ? '#c8b88a' : '#7fc99a';
+    head = `<b>Land owner</b><br><span style="color:${col}">${esc(cat)}</span>${agency}${unit}${desc}`;
+  } else {
+    // Only a designation overlay covers this point — no surface-ownership polygon.
+    head = '<b>Land owner</b><br><span class="pininfo">No surface-ownership record here</span>';
+  }
+  // Designation overlays (military training areas, Wilderness, etc.) flagged after the
+  // owner, since they restrict public access regardless of who holds the surface.
+  const overlays = (res.designations||[]).map(d=>{
+    const name = d.Unit_Nm || PAD_AGENCY[String(d.Mang_Name||'').toUpperCase()] || 'Designated area';
+    const type = PAD_DESG[String(d.Des_Tp||'').toUpperCase()];
+    const isMil = String(d.Des_Tp||'').toUpperCase()==='MIL';
+    const col = isMil ? '#d23b2e' : '#e8b04a';
+    return `<br><span style="color:${col}">⚠ ${type?esc(type)+' — ':''}${esc(name)}</span>`;
+  }).join('');
+  return head + overlays;
 }
 function geoHtml(g){
   if(!g) return '<b>Geology</b><br><span class="pininfo">No mapped unit here</span>';
@@ -507,7 +538,7 @@ async function identifyAt(latlng){
   let geoPart  ='<b>Geology</b><br><span class="pininfo">Looking up…</span>';
   const render=()=>{ if(seq===identifySeq) popup.setContent('<div class="id-scroll">'+ownerPart+'<hr style="border:none;border-top:1px solid var(--line);margin:8px 0">'+geoPart+'</div>'); };
   render();
-  entry.owner.then(a=>{ ownerPart=ownerHtml(a); },
+  entry.owner.then(res=>{ ownerPart=ownerHtml(res); },
                    ()=>{ ownerPart='<b>Land owner</b><br><span class="pininfo">Lookup failed — tap again</span>'; }).then(render);
   entry.geo.then(g=>{ geoPart=geoHtml(g); },
                  ()=>{ geoPart='<b>Geology</b><br><span class="pininfo">Lookup failed — tap again</span>'; }).then(render);
