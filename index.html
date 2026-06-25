@@ -56,6 +56,14 @@
   .fab.gps.live{background:var(--green);color:#10160f;border-color:var(--green)}
   .fab small{font-size:9px}
 
+  /* ── "You are here" marker, with facing cone ────────────── */
+  .me-icon{pointer-events:none}
+  .me-cone{position:absolute;left:0;top:0;width:60px;height:60px;
+    transform-origin:30px 30px;transition:transform .12s linear;will-change:transform}
+  .me-cone.hide{display:none}
+  .me-dot{position:absolute;left:50%;top:50%;width:16px;height:16px;margin:-8px 0 0 -8px;
+    border-radius:50%;background:var(--green);border:2px solid #fff;box-shadow:0 0 4px rgba(0,0,0,.55)}
+
   /* bottom bar */
   #bar{position:absolute;left:0;right:0;bottom:0;z-index:1000;
     padding:8px 10px calc(env(safe-area-inset-bottom) + 8px);
@@ -644,7 +652,53 @@ if($('#lyrMines').checked){
 
 /* ---- GPS + ground-status banner ------------------------- */
 let watchId=null, meMarker=null, accCircle=null, lastPos=null;
+let compassHeading=null, gpsHeading=null, orientOn=false;
 const statusEl=$('#status');
+
+/* "You are here" dot with a flashlight cone showing facing direction.
+   Heading comes from the device compass when available, else GPS course. */
+const meIcon=L.divIcon({className:'me-icon',iconSize:[60,60],iconAnchor:[30,30],
+  html:'<div class="me-cone hide"><svg width="60" height="60" viewBox="0 0 60 60">'
+    +'<defs><linearGradient id="meGrad" gradientUnits="userSpaceOnUse" x1="30" y1="30" x2="30" y2="0">'
+    +'<stop offset="0" stop-color="#7fd29a" stop-opacity=".85"/>'
+    +'<stop offset="1" stop-color="#7fd29a" stop-opacity="0"/></linearGradient></defs>'
+    +'<path d="M30 30 L12 4 L48 4 Z" fill="url(#meGrad)"/></svg></div>'
+    +'<div class="me-dot"></div>'});
+function curHeading(){ return compassHeading!=null ? compassHeading : gpsHeading; }
+function applyHeading(){
+  if(!meMarker) return;
+  const el=meMarker.getElement(); if(!el) return;
+  const cone=el.querySelector('.me-cone'); if(!cone) return;
+  const h=curHeading();
+  if(h==null){ cone.classList.add('hide'); return; }
+  cone.classList.remove('hide');
+  cone.style.transform='rotate('+h+'deg)';
+}
+function onOrient(e){
+  let h=null;
+  if(typeof e.webkitCompassHeading==='number') h=e.webkitCompassHeading;   // iOS: clockwise from north
+  else if(e.absolute && typeof e.alpha==='number') h=360-e.alpha;          // Android absolute frame
+  if(h==null||isNaN(h)) return;
+  const so=(screen.orientation && screen.orientation.angle)||0;            // keep true when phone is rotated
+  compassHeading=((h+so)%360+360)%360;
+  applyHeading();
+}
+function startCompass(){
+  if(orientOn) return;
+  const add=()=>{
+    window.addEventListener('deviceorientationabsolute', onOrient, true);
+    window.addEventListener('deviceorientation', onOrient, true);
+    orientOn=true;
+  };
+  if(typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function'){
+    DeviceOrientationEvent.requestPermission().then(s=>{ if(s==='granted') add(); }).catch(()=>{}); // iOS 13+ gesture-gated
+  } else add();
+}
+function stopCompass(){
+  window.removeEventListener('deviceorientationabsolute', onOrient, true);
+  window.removeEventListener('deviceorientation', onOrient, true);
+  orientOn=false; compassHeading=null; gpsHeading=null;
+}
 function setStatus(kind, txt, sub){
   statusEl.className=kind||'';
   $('#stxt').textContent=txt; $('#ssub').textContent=sub||'';
@@ -693,19 +747,24 @@ function onPos(p){
   lastPos={lat,lng};
   const ll=[lat,lng];
   if(!meMarker){
-    meMarker=L.circleMarker(ll,{radius:7,color:'#fff',weight:2,fillColor:'#5a9e6f',fillOpacity:1}).addTo(map);
+    meMarker=L.marker(ll,{icon:meIcon,interactive:false,keyboard:false,zIndexOffset:1000}).addTo(map);
     accCircle=L.circle(ll,{radius:acc,color:'#5a9e6f',weight:1,fillColor:'#5a9e6f',fillOpacity:.08}).addTo(map);
     map.setView(ll, Math.max(map.getZoom(),15));
     if(navigator.onLine) refreshClaims();
   }else{ meMarker.setLatLng(ll); accCircle.setLatLng(ll).setRadius(acc); }
+  // GPS course is only meaningful while actually moving; used when no compass.
+  gpsHeading = (typeof p.coords.heading==='number' && !isNaN(p.coords.heading) && p.coords.speed>0)
+    ? p.coords.heading : null;
+  applyHeading();
   $('#sright').innerHTML = `${fmt(lat, lat>=0?'N':'S')}<br>${fmt(lng, lng>=0?'E':'W')}<br>±${Math.round(acc)} m`;
   evaluatePosition(lastPos);
 }
 function gpsToggle(){
   const btn=$('#btnGps');
-  if(watchId!=null){ navigator.geolocation.clearWatch(watchId); watchId=null; btn.classList.remove('live'); setStatus('','GPS off','Tap the crosshair to start locating'); $('#sright').textContent=''; return; }
+  if(watchId!=null){ navigator.geolocation.clearWatch(watchId); watchId=null; stopCompass(); applyHeading(); btn.classList.remove('live'); setStatus('','GPS off','Tap the crosshair to start locating'); $('#sright').textContent=''; return; }
   if(!navigator.geolocation){ toast('No geolocation on this device'); return; }
   setStatus('','Locating…','Acquiring GPS fix');
+  startCompass(); // requested here so iOS gets the required user-gesture permission prompt
   watchId=navigator.geolocation.watchPosition(onPos,
     err=>{ setStatus('','GPS error', err.message); toast('Location: '+err.message); btn.classList.remove('live'); watchId=null; },
     { enableHighAccuracy:true, maximumAge:2000, timeout:20000 });
