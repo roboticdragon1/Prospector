@@ -145,9 +145,9 @@
     <div class="legend">
       <label class="li"><input type="checkbox" id="lyrClaims" checked> <span class="sw" style="background:#e8821e33;border-color:#e8821e"></span> Active mining claims <span class="pill">avoid</span></label>
       <label class="li"><input type="checkbox" id="lyrPlans" checked> <span class="sw" style="background:#d23b2e33;border-color:#d23b2e"></span> Active operations (Plans of Ops) <span class="pill">avoid</span></label>
-      <label class="li"><input type="checkbox" id="lyrSMA"> <span class="sw" style="background:linear-gradient(45deg,#e7d24a,#5a9e6f)"></span> Land ownership (who manages the surface)</label>
+      <label class="li"><input type="checkbox" id="lyrSMA" checked> <span class="sw" style="background:linear-gradient(45deg,#e7d24a,#5a9e6f)"></span> Land ownership (who manages the surface)</label>
       <label class="li"><input type="checkbox" id="lyrGeo"> <span class="sw" style="background:linear-gradient(45deg,#7e6,#69c)"></span> Geology (rock units)</label>
-      <label class="li"><input type="checkbox" id="lyrMines"> <span class="sw" style="background:radial-gradient(circle,#3d8fd1 55%,#fff 60%),radial-gradient(circle,#e8821e 55%,#fff 60%)"></span> Mine &amp; mineral sites (USGS) <span class="pill">info</span></label>
+      <label class="li"><input type="checkbox" id="lyrMines" checked> <span class="sw" style="background:radial-gradient(circle,#3d8fd1 55%,#fff 60%),radial-gradient(circle,#e8821e 55%,#fff 60%)"></span> Mine &amp; mineral sites (USGS) <span class="pill">info</span></label>
       <label class="li"><input type="checkbox" id="lyrPins" checked> <span class="sw" style="background:#c8b88a"></span> My note pins</label>
     </div>
 
@@ -621,6 +621,17 @@ $('#lyrSMA').onchange   =e=>{
   } else { map.removeLayer(smaLayer); }
   $('#smaKey').style.display = e.target.checked? 'block':'none';
 };
+// Land ownership ships checked-by-default: run its toggle handler once on load so the layer,
+// its key panel, and z-order are set exactly as if the user had ticked the box (tiles only,
+// no data fetch).
+if($('#lyrSMA').checked) $('#lyrSMA').dispatchEvent(new Event('change'));
+// Mines also ship checked-by-default but lazy: show the layer + key now, then defer the
+// network fetch to the first map move (the moveend handler fetches mines whenever their
+// layer is on the map). Offline there's no move-driven fetch, so pull cached mines now.
+if($('#lyrMines').checked){
+  mineLayer.addTo(map); $('#minesKey').style.display='block';
+  if(!navigator.onLine) loadOfflineData('mines').then(om=>{ if(om){ mineLayer.clearLayers(); mineLayer.addData(om); } });
+}
 
 /* ---- GPS + ground-status banner ------------------------- */
 let watchId=null, meMarker=null, accCircle=null, lastPos=null;
@@ -914,7 +925,7 @@ window.addEventListener('offline',()=>{ toast('Offline — using saved maps & cl
   if(!navigator.onLine){
     const oc=await loadOfflineData('claims'); if(oc){ claimLayer.addData(oc); lastClaims=oc; }
     const op=await loadOfflineData('plans');  if(op){ planLayer.addData(op);  lastPlans=op; }
-    const om=await loadOfflineData('mines');  if(om && $('#lyrMines').checked){ mineLayer.addData(om).addTo(map); }
+    // Mines (when their layer is on) are loaded from cache by the layer's own toggle handler.
     setStatus('','Offline','Using saved maps & claims');
   }
 })();
