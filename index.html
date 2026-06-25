@@ -294,10 +294,19 @@ L.control.zoom({ position:'topleft' }).addTo(map);
 map.attributionControl.setPosition('bottomleft');
 
 let baseLayer = L.tileLayer(BASE.topo.url, { maxNativeZoom:BASE.topo.max, maxZoom:19, attribution:BASE.topo.attr }).addTo(map);
-// maxNativeZoom: Macrostrat carto only has real tiles to ~z15 (z16+ are empty); Leaflet
-// upscales the z15 tile so the geology shading stays visible all the way to max zoom.
+// Macrostrat carto serves real 512px tiles all the way to z19. maxNativeZoom:17 fetches
+// native tiles to z17 (crisp polygon edges) and only upscales for z18-19, instead of
+// stretching one z15 tile across four extra zoom levels — that heavy upscaling left the
+// shading blurry and, when a single over-stretched tile failed to load, blanked out a
+// large section of the map until the next pan. keepBuffer holds nearby tiles through a
+// zoom so sections don't flash empty, and tileerror retries a dropped request so a
+// hiccup from the tile server doesn't leave a permanent gap.
 const geoLayer = L.tileLayer('https://tiles.macrostrat.org/carto/{z}/{x}/{y}.png',
-  { opacity:0.5, maxNativeZoom:15, maxZoom:19, attribution:'Geology: Macrostrat (USGS-derived)' });
+  { opacity:0.5, maxNativeZoom:17, maxZoom:19, keepBuffer:4, attribution:'Geology: Macrostrat (USGS-derived)' });
+geoLayer.on('tileerror', e=>{
+  const t=e.tile, n=(t._retry||0);
+  if(n<2){ t._retry=n+1; const base=t.src.split('?')[0]; setTimeout(()=>{ t.src=base+'?r='+Date.now(); }, 500*(n+1)); }
+});
 // Land ownership / surface-management agency (BLM SMA, cached tiles, includes Private/Unknown)
 const SMA_URL = 'https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_Cached_with_PriUnk/MapServer/tile/{z}/{y}/{x}';
 // maxNativeZoom:14 — the BLM SMA cache only has tiles to z14 (z15+ return 404 and the
