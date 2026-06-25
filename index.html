@@ -113,11 +113,16 @@
   .pill{display:inline-block;font-family:var(--mono);font-size:10px;padding:2px 7px;border-radius:20px;border:1px solid var(--line);color:var(--muted);margin-left:6px}
   a{color:var(--tan)}
 
-  /* ── Search bar (top, below the status banner) ──────────── */
-  #searchWrap{position:absolute;left:12px;right:12px;z-index:1200;max-width:560px;margin:0 auto}
-  #searchBox{display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--line);
-    border-radius:12px;padding:0 10px;box-shadow:0 4px 14px rgba(0,0,0,.4)}
-  #searchBox .ico{font-size:16px;color:var(--muted);flex:none}
+  /* ── Search overlay (opens from the 🔍 button in the stack) ── */
+  #searchWrap{position:absolute;top:0;left:0;right:0;z-index:2500;display:none;
+    padding:calc(env(safe-area-inset-top) + 8px) 10px 8px;
+    background:linear-gradient(180deg,rgba(26,29,26,.97),rgba(26,29,26,.85));
+    border-bottom:1px solid var(--line);backdrop-filter:blur(6px)}
+  #searchWrap.show{display:block}
+  #searchBox{display:flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--line);
+    border-radius:12px;padding:0 8px;box-shadow:0 4px 14px rgba(0,0,0,.4)}
+  #searchBox .ico{flex:none;border:none;background:none;color:var(--muted);font-size:20px;line-height:1;
+    cursor:pointer;padding:6px 4px}
   #searchInput{flex:1;min-width:0;background:none;border:none;color:var(--text);font-family:var(--sans);
     font-size:14px;padding:11px 0;outline:none}
   #searchInput::placeholder{color:var(--muted)}
@@ -157,7 +162,7 @@
 <!-- Search: roads, places, trails, POIs, mines & claims -->
 <div id="searchWrap">
   <div id="searchBox">
-    <span class="ico">⌕</span>
+    <button id="searchBack" class="ico" title="Close search">←</button>
     <input id="searchInput" type="text" placeholder="Search roads, trails, places, mines…"
       autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" />
     <div id="searchSpin"></div>
@@ -168,6 +173,7 @@
 
 <!-- Right-side floating actions -->
 <div class="stack">
+  <div class="fab" id="btnSearch" title="Search">🔍</div>
   <div class="fab" id="btnLayers" title="Layers & legend">▤</div>
   <div class="fab" id="btnOffline" title="Save area offline">⤓</div>
   <div class="fab" id="btnPin" title="Drop a note pin">📍</div>
@@ -934,17 +940,12 @@ const searchIcon=L.divIcon({className:'',iconSize:[30,30],iconAnchor:[15,28],
   html:'<div style="font-size:26px;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,.7))">📌</div>'});
 const SRES_EMOJI={ road:'🛣️', place:'🏘️', poi:'⭐', peak:'⛰️', trail:'🥾', track:'🚙', mine:'⛏️', claim:'🟧', op:'🟥' };
 
-// The search bar floats below the variable-height status banner; nudge the Leaflet zoom
-// control down so the two don't overlap. Recomputed on resize / rotate.
-function positionSearch(){
-  const top=statusEl.offsetHeight+8;
-  searchWrap.style.top=top+'px';
-  const ztl=document.querySelector('.leaflet-top.leaflet-left');
-  if(ztl) ztl.style.marginTop=(top+48)+'px';
-}
-positionSearch();
-window.addEventListener('resize',positionSearch);
-window.addEventListener('orientationchange',()=>setTimeout(positionSearch,300));
+// The search is a top overlay opened from the 🔍 button in the right-hand stack, so it never
+// fights the status banner for space. Opening focuses the field; the ← / clear / map-tap close it.
+function openSearch(){ searchWrap.classList.add('show'); setTimeout(()=>searchInput.focus(),50); }
+function closeSearch(){ searchWrap.classList.remove('show'); clearSearch(); }
+$('#btnSearch').onclick=()=>{ searchWrap.classList.contains('show')? closeSearch():openSearch(); };
+$('#searchBack').onclick=closeSearch;
 
 // Local layers — matches by name, instant and offline. eachLayer still works when a layer
 // is toggled off the map (the data stays on the L.geoJSON object).
@@ -1054,7 +1055,7 @@ searchInput.addEventListener('input',()=>{
 });
 searchInput.addEventListener('keydown',e=>{
   if(e.key==='Enter'&&searchResults.length){ e.preventDefault(); selectResult(searchResults[0]); }
-  else if(e.key==='Escape'){ clearSearch(); }
+  else if(e.key==='Escape'){ closeSearch(); }
 });
 function clearSearch(){
   searchSeq++; clearTimeout(searchT);   // invalidate any in-flight request so it can't re-open the list
@@ -1066,7 +1067,7 @@ $('#searchClear').onclick=clearSearch;
 
 function selectResult(r){
   if(!r) return;
-  searchWrap.classList.remove('open'); searchInput.blur();
+  searchWrap.classList.remove('open','show'); searchInput.blur();  // close the overlay so the result is visible on the map
   searchResultLayer.clearLayers();
   if(r.geometry && r.geometry.length>1){
     const line=L.polyline(r.geometry,{color:'#c8b88a',weight:5,opacity:.9}).addTo(searchResultLayer);
@@ -1079,8 +1080,8 @@ function selectResult(r){
   const m=L.marker([r.lat,r.lng],{icon:searchIcon,zIndexOffset:900}).addTo(searchResultLayer);
   m.bindPopup('<b>'+esc(r.label)+'</b>'+(r.sub?'<br><span class="pininfo">'+esc(r.sub)+'</span>':'')).openPopup();
 }
-// Tapping the map (to identify a spot) dismisses the results list.
-map.on('click',()=> searchWrap.classList.remove('open'));
+// Tapping the map (to identify a spot) dismisses the search overlay.
+map.on('click',()=> searchWrap.classList.remove('open','show'));
 
 /* ---- Offline save --------------------------------------- */
 function tilesForBounds(b, z){

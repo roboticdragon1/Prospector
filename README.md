@@ -3,7 +3,7 @@
 A field web app that shows whether the ground under your GPS is **open**, **claimed**, or under an **active mining operation**, with geology, USGS/OSM basemaps, photo note-pins, and offline support. Data comes live from the BLM's official Mineral & Land Records System (MLRS) — the same source The Diggings uses.
 
 ## Using it in the field
-- **Search bar (top)** — find roads, towns, trails, peaks, and other places, plus mine sites and claims by name. Local layers (claims, operations, mine sites) match instantly and work offline; roads/places/POIs (OpenStreetMap Nominatim) and named trails/tracks (Overpass) need a connection and are biased to the area on screen. Tap a result to jump there — trails highlight their full path.
+- **🔍 Search** — tap the magnifying glass in the right-side button stack to find roads, towns, trails, peaks, and other places, plus mine sites and claims by name. Local layers (claims, operations, mine sites) match instantly and work offline; roads/places/POIs (OpenStreetMap Nominatim) and named trails/tracks (Overpass) need a connection and are biased to the area on screen. Tap a result to jump there — trails highlight their full path.
 - **Crosshair (◎)** — start/stop GPS. The top banner turns green (open), amber (active claim), or red (active operation) based on the claim polygons loaded for your area. **Tap the banner** to verify the exact spot at the BLM.
 - **⟳ Claims** — refresh claims for the area on screen. Claims auto-load when you pan while zoomed in and online.
 - **📍** — drop-pin mode: tap the map to log a note + photos.
