@@ -98,6 +98,8 @@
   .leaflet-popup-tip{background:var(--surface);border:1px solid var(--line)}
   .leaflet-popup-content{margin:10px 12px;font-size:13px}
   .leaflet-popup-content b{color:var(--tan)}
+  /* Cap the identify popup height (~500 chars) and scroll for the rest. */
+  .id-scroll{max-height:240px;overflow-y:auto;overscroll-behavior:contain}
   .progress{height:6px;background:var(--ink);border-radius:6px;overflow:hidden;margin-top:10px;border:1px solid var(--line)}
   .progress > i{display:block;height:100%;width:0;background:var(--amber);transition:width .2s}
   .pill{display:inline-block;font-family:var(--mono);font-size:10px;padding:2px 7px;border-radius:20px;border:1px solid var(--line);color:var(--muted);margin-left:6px}
@@ -292,11 +294,16 @@ L.control.zoom({ position:'topleft' }).addTo(map);
 map.attributionControl.setPosition('bottomleft');
 
 let baseLayer = L.tileLayer(BASE.topo.url, { maxNativeZoom:BASE.topo.max, maxZoom:19, attribution:BASE.topo.attr }).addTo(map);
+// maxNativeZoom: Macrostrat carto only has real tiles to ~z15 (z16+ are empty); Leaflet
+// upscales the z15 tile so the geology shading stays visible all the way to max zoom.
 const geoLayer = L.tileLayer('https://tiles.macrostrat.org/carto/{z}/{x}/{y}.png',
-  { opacity:0.5, maxZoom:19, attribution:'Geology: Macrostrat (USGS-derived)' });
+  { opacity:0.5, maxNativeZoom:15, maxZoom:19, attribution:'Geology: Macrostrat (USGS-derived)' });
 // Land ownership / surface-management agency (BLM SMA, cached tiles, includes Private/Unknown)
 const SMA_URL = 'https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_Cached_with_PriUnk/MapServer/tile/{z}/{y}/{x}';
-const smaLayer = L.tileLayer(SMA_URL, { opacity:0.45, maxZoom:19, attribution:'Surface management: BLM SMA' });
+// maxNativeZoom:14 — the BLM SMA cache only has tiles to z14 (z15+ return 404 and the
+// ownership shading vanishes). This makes Leaflet upscale the z14 tiles instead, so the
+// fill/labels keep rendering at full zoom.
+const smaLayer = L.tileLayer(SMA_URL, { opacity:0.45, maxNativeZoom:14, maxZoom:19, attribution:'Surface management: BLM SMA' });
 // USGS PAD-US "Manager Name" layer — the named public-lands database (Pike National Forest,
 // WY State Trust Lands, etc.). Fast point query (~0.3s); used for both the click popup and
 // the on-map ownership labels. A point with no PAD-US feature is unmanaged → private/unknown.
@@ -498,7 +505,7 @@ async function identifyAt(latlng){
   // the slower BLM owner lookup (~0.9s), so the popup never waits on the slowest source.
   let ownerPart='<b>Land owner</b><br><span class="pininfo">Looking up…</span>';
   let geoPart  ='<b>Geology</b><br><span class="pininfo">Looking up…</span>';
-  const render=()=>{ if(seq===identifySeq) popup.setContent(ownerPart+'<hr style="border:none;border-top:1px solid var(--line);margin:8px 0">'+geoPart); };
+  const render=()=>{ if(seq===identifySeq) popup.setContent('<div class="id-scroll">'+ownerPart+'<hr style="border:none;border-top:1px solid var(--line);margin:8px 0">'+geoPart+'</div>'); };
   render();
   entry.owner.then(a=>{ ownerPart=ownerHtml(a); },
                    ()=>{ ownerPart='<b>Land owner</b><br><span class="pininfo">Lookup failed — tap again</span>'; }).then(render);
