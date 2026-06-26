@@ -830,10 +830,14 @@ function openIDB(name){ return new Promise((res,rej)=>{
 });}
 function openDB(){ return openIDB('prospector').then(d=>{ db=d; return db; }); }
 function tx(store,mode){ return db.transaction(store,mode).objectStore(store); }
-function idbPut(store,val){ return new Promise((res,rej)=>{ const q=tx(store,'readwrite').put(val); q.onsuccess=()=>res(); q.onerror=()=>rej(q.error); }); }
+// Writes resolve on transaction.oncomplete, not request.onsuccess: the request succeeding
+// only means the value was accepted into the transaction — the data isn't durable until the
+// transaction commits. WebKit/iOS in particular can drop a write that was acknowledged but
+// never committed, which silently lost note pins added offline after a refresh.
+function idbPut(store,val){ return new Promise((res,rej)=>{ const t=db.transaction(store,'readwrite'); t.objectStore(store).put(val); t.oncomplete=()=>res(); t.onerror=()=>rej(t.error); t.onabort=()=>rej(t.error); }); }
 function idbGet(store,key){ return new Promise((res,rej)=>{ const q=tx(store,'readonly').get(key); q.onsuccess=()=>res(q.result); q.onerror=()=>rej(q.error); }); }
 function idbAll(store){ return new Promise((res,rej)=>{ const q=tx(store,'readonly').getAll(); q.onsuccess=()=>res(q.result||[]); q.onerror=()=>rej(q.error); }); }
-function idbDel(store,key){ return new Promise((res,rej)=>{ const q=tx(store,'readwrite').delete(key); q.onsuccess=()=>res(); q.onerror=()=>rej(q.error); }); }
+function idbDel(store,key){ return new Promise((res,rej)=>{ const t=db.transaction(store,'readwrite'); t.objectStore(store).delete(key); t.oncomplete=()=>res(); t.onerror=()=>rej(t.error); t.onabort=()=>rej(t.error); }); }
 const saveOfflineData=(key,val)=> db? idbPut('offline',{key,val}):Promise.resolve();
 const loadOfflineData=async key=>{ if(!db) return null; const r=await idbGet('offline',key); return r? r.val:null; };
 
@@ -1185,6 +1189,9 @@ $('#btnGps').addEventListener('touchend',()=>clearTimeout(lp));
 window.addEventListener('online', ()=>{ toast('Back online'); });
 window.addEventListener('offline',()=>{ toast('Offline — using saved maps & claims'); });
 (async function init(){
+  // Ask the browser to keep our IndexedDB (pins, photos, saved claims) in persistent storage
+  // so it isn't evicted as "best-effort" data. Best-effort, fire-and-forget — no user prompt.
+  try{ if(navigator.storage && navigator.storage.persist) await navigator.storage.persist(); }catch(e){}
   try{ await openDB(); await migrateFromClaimWatch(); await loadPins(); }catch(e){ console.warn('IDB',e); }
   if('serviceWorker' in navigator){
     try{ swReg=await navigator.serviceWorker.register('sw.js'); }catch(e){ console.warn('SW',e); }
