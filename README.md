@@ -18,7 +18,7 @@ Toggle **Land ownership** in the layers sheet to shade the map by who manages th
 - Claim **squares are approximate** — they cover the claim's PLSS section area and are often larger than the actual claimed ground. The app's status check is only as precise as those polygons.
 - The BLM data can lag real status changes. **Before doing anything that depends on a claim being open or closed, verify directly with the BLM** (MLRS / the local field office). This app is for situational awareness, not a legal determination of where you may go.
 - "Open ground" here only means *no active BLM mining claim at your point*. It does **not** account for private land, wilderness, withdrawals, special closures, or other restrictions. Cross-check land status separately.
-- Geology overlay is generalized (USGS-derived via Macrostrat), good for context, not for precise contacts.
+- Geology overlay is generalized, good for context, not for precise contacts. Two interchangeable sources: **Macrostrat** (USGS-derived) and the **USGS State Geologic Map Compilation (SGMC)**; pick one in the layers sheet.
 
 ## Swapping data sources (optional, for later)
-In `index.html`, the `ENDPOINTS` object holds the BLM claim/plans query URLs, and `BASE` holds the basemaps. The geology overlay URL is the Macrostrat tile line. You can point these at USGS SGMC WMS or other ArcGIS services if you'd rather.
+In `index.html`, the `ENDPOINTS` object holds the BLM claim/plans query URLs, and `BASE` holds the basemaps. The geology overlays are the `geoLayer` (Macrostrat) and `sgmcLayer` (USGS SGMC) tile lines. You can point these at other WMS/WMTS or ArcGIS services if you'd rather — XYZ/`GoogleMapsCompatible` tile services drop straight into `L.tileLayer`. If you add a new tile host, also add it to `TILE_HOSTS` in `sw.js` so saved areas render offline.

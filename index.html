@@ -199,7 +199,8 @@
       <label class="li"><input type="checkbox" id="lyrClaims" checked> <span class="sw" style="background:#e8821e33;border-color:#e8821e"></span> Active mining claims <span class="pill">avoid</span></label>
       <label class="li"><input type="checkbox" id="lyrPlans" checked> <span class="sw" style="background:#d23b2e33;border-color:#d23b2e"></span> Active operations (Plans of Ops) <span class="pill">avoid</span></label>
       <label class="li"><input type="checkbox" id="lyrSMA" checked> <span class="sw" style="background:linear-gradient(45deg,#e7d24a,#5a9e6f)"></span> Land ownership (who manages the surface)</label>
-      <label class="li"><input type="checkbox" id="lyrGeo"> <span class="sw" style="background:linear-gradient(45deg,#7e6,#69c)"></span> Geology (rock units)</label>
+      <label class="li"><input type="checkbox" id="lyrGeo"> <span class="sw" style="background:linear-gradient(45deg,#7e6,#69c)"></span> Geology — rock units (Macrostrat)</label>
+      <label class="li"><input type="checkbox" id="lyrSgmc"> <span class="sw" style="background:linear-gradient(45deg,#e0b97d,#9c6b4f)"></span> Geology — state maps (USGS SGMC)</label>
       <label class="li"><input type="checkbox" id="lyrMines" checked> <span class="sw" style="background:radial-gradient(circle,#3d8fd1 55%,#fff 60%),radial-gradient(circle,#e8821e 55%,#fff 60%)"></span> Mine &amp; mineral sites (USGS) <span class="pill">info</span></label>
       <label class="li"><input type="checkbox" id="lyrPins" checked> <span class="sw" style="background:#c8b88a"></span> My note pins</label>
     </div>
@@ -357,6 +358,18 @@ let baseLayer = L.tileLayer(BASE.topo.url, { maxNativeZoom:BASE.topo.max, maxZoo
 const geoLayer = L.tileLayer('https://tiles.macrostrat.org/carto/{z}/{x}/{y}.png',
   { opacity:0.5, maxNativeZoom:17, maxZoom:19, keepBuffer:4, attribution:'Geology: Macrostrat (USGS-derived)' });
 geoLayer.on('tileerror', e=>{
+  const t=e.tile, n=(t._retry||0);
+  if(n<2){ t._retry=n+1; const base=t.src.split('?')[0]; setTimeout(()=>{ t.src=base+'?r='+Date.now(); }, 500*(n+1)); }
+});
+// USGS State Geologic Map Compilation (SGMC) — an alternative geology source: the colored
+// state geologic map units (1:500,000-scale), served as pre-rendered Web-Mercator tiles from
+// the USGS mrdata mapcache (its GoogleMapsCompatible matrix set = standard {z}/{y}/{x}, so it
+// drops in like any XYZ layer). The source maps have no detail past ~1:500k, so maxNativeZoom:16
+// fetches native tiles to z16 and upscales beyond rather than chasing detail that isn't there.
+// keepBuffer + the tileerror retry mirror the Macrostrat layer above.
+const sgmcLayer = L.tileLayer('https://mrdata.usgs.gov/mapcache/wmts/1.0.0/sgmc2/default/GoogleMapsCompatible/{z}/{y}/{x}.png',
+  { opacity:0.5, maxNativeZoom:16, maxZoom:19, keepBuffer:4, attribution:'Geology: USGS SGMC' });
+sgmcLayer.on('tileerror', e=>{
   const t=e.tile, n=(t._retry||0);
   if(n<2){ t._retry=n+1; const base=t.src.split('?')[0]; setTimeout(()=>{ t.src=base+'?r='+Date.now(); }, 500*(n+1)); }
 });
@@ -666,7 +679,17 @@ let moveT; map.on('moveend',()=>{ clearTimeout(moveT); moveT=setTimeout(()=>{ if
 /* layer toggles */
 $('#lyrClaims').onchange=e=> e.target.checked? claimLayer.addTo(map):map.removeLayer(claimLayer);
 $('#lyrPlans').onchange =e=> e.target.checked? planLayer.addTo(map):map.removeLayer(planLayer);
-$('#lyrGeo').onchange   =e=> e.target.checked? geoLayer.addTo(map):map.removeLayer(geoLayer);
+// The two geology overlays (Macrostrat tiles vs USGS SGMC state maps) are both translucent
+// rock-unit fills of the same ground — stacking them just muddies the map — so they're mutually
+// exclusive: turning one on turns the other off. Either (or neither) can be active.
+$('#lyrGeo').onchange   =e=>{
+  if(e.target.checked){ $('#lyrSgmc').checked=false; map.removeLayer(sgmcLayer); geoLayer.addTo(map); }
+  else map.removeLayer(geoLayer);
+};
+$('#lyrSgmc').onchange  =e=>{
+  if(e.target.checked){ $('#lyrGeo').checked=false; map.removeLayer(geoLayer); sgmcLayer.addTo(map); }
+  else map.removeLayer(sgmcLayer);
+};
 $('#lyrPins').onchange  =e=> e.target.checked? pinGroup.addTo(map):map.removeLayer(pinGroup);
 $('#lyrMines').onchange =e=>{
   $('#minesKey').style.display = e.target.checked? 'block':'none';
@@ -1101,6 +1124,7 @@ function buildTileUrls(){
   const b=map.getBounds(); const z0=Math.max(map.getZoom(),11); const urls=[];
   const baseDef=BASE[currentBase]; const maxN=baseDef.max;
   const geoOn=map.hasLayer(geoLayer);
+  const sgmcOn=map.hasLayer(sgmcLayer);
   const smaOn=map.hasLayer(smaLayer);
   for(let z=z0; z<=Math.min(z0+3, maxN+2); z++){
     const tiles=tilesForBounds(b, Math.min(z,maxN));
@@ -1108,6 +1132,7 @@ function buildTileUrls(){
       const sub='abc'[(t.x+t.y)%3];
       urls.push(baseDef.url.replace('{z}',t.z).replace('{y}',t.y).replace('{x}',t.x).replace('{s}',sub));
       if(geoOn) urls.push('https://tiles.macrostrat.org/carto/'+t.z+'/'+t.x+'/'+t.y+'.png');
+      if(sgmcOn) urls.push('https://mrdata.usgs.gov/mapcache/wmts/1.0.0/sgmc2/default/GoogleMapsCompatible/'+t.z+'/'+t.y+'/'+t.x+'.png');
       if(smaOn) urls.push(SMA_URL.replace('{z}',t.z).replace('{y}',t.y).replace('{x}',t.x));
     }
     if(urls.length>2500) break;
