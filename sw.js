@@ -1,7 +1,7 @@
 /* Prospector service worker
    Strategy:
    - App shell (this app's own files + Leaflet CDN): cached on install, cache-first.
-   - Map tiles (OSM / USGS basemap / Macrostrat geology): runtime cache, cache-first.
+   - Map tiles (OSM / USGS basemap / Macrostrat + USGS SGMC geology): runtime cache, cache-first.
      This is what makes a "saved" area render offline.
    - BLM ArcGIS claim queries: network-first, fall back to cache (handled mostly in the app).
 */
@@ -26,6 +26,7 @@ const TILE_HOSTS = [
   'tile.openstreetmap.org',
   'basemap.nationalmap.gov',
   'tiles.macrostrat.org',
+  'mrdata.usgs.gov',
   'server.arcgisonline.com'
 ];
 
