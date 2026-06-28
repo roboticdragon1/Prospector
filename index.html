@@ -231,9 +231,9 @@
       <p style="margin-top:8px">The colored fill and boundary labels come from the BLM ownership layer. <b style="color:var(--tan)">Tap any spot</b> for the named public unit (national forest, BLM district, state trust land, park) from USGS PAD-US. <b style="color:var(--tan)">Private parcels aren't named</b> — owner-name data for private land isn't public.</p>
     </div>
 
-    <p style="margin-top:14px">Claims load for the area on screen when you're zoomed in past ~town level. Pan, then tap <b>⟳ Claims</b> to refresh. Source: BLM Mineral &amp; Land Records System (MLRS) — the same official data The Diggings uses. Squares cover the claim's PLSS area and may be larger than the actual claim.</p>
+    <p style="margin-top:14px">Claims load for the area on screen when you're zoomed in past ~town level. Pan, then tap <b>⟳ Claims</b> to refresh. Source: BLM Mineral &amp; Land Records System (MLRS) — the same official data The Diggings uses. Squares cover the claim's PLSS area and may be larger than the actual claim. A <b>dashed</b> square marks a claim whose BLM-mapped boundary is low-confidence (approximate edges) — the claim itself is just as real.</p>
 
-    <p style="border-left:3px solid var(--amber);padding-left:10px"><b style="color:var(--amber)">Two ways a real claim can look missing.</b> The squares show <i>active</i> claims only. A historic mine that's been <i>closed</i> (e.g. the "Rainbow Lode" USGS record) won't show as a square — but the ground may still be claimed under a different owner's name. And a small number of BLM cases have no mapped boundary at all, so they appear in no polygon layer. When it matters, verify the exact spot 👇</p>
+    <p style="border-left:3px solid var(--amber);padding-left:10px"><b style="color:var(--amber)">Two ways a real claim can look missing.</b> The squares show every claim BLM still lists as open — active <i>and</i> still-in-process ("Filed"). But a claim that's been <i>closed</i> (e.g. the "Rainbow Lode" USGS record) won't show as a square — and the ground may still be re-claimed under a different owner's name. And a small number of BLM cases have no mapped boundary at all, so they appear in no polygon layer. When it matters, verify the exact spot 👇</p>
 
     <div class="row"><button class="btn" id="btnVerifyHere">Verify this spot at the BLM</button></div>
     <div class="row"><button class="btn ghost" data-close>Done</button></div>
@@ -327,7 +327,7 @@ const ENDPOINTS = {
   // USGS MRDS (Mineral Resources Data System) — physical mine sites/prospects, point data w/ commodities.
   mines:  'https://services.arcgis.com/v01gqwM5QqNysAAi/ArcGIS/rest/services/Mineral_Resources_Data_System_MRDS_Compact_Version/FeatureServer/0/query'
 };
-const CLAIM_FIELDS='CSE_NAME,CSE_DISP,CSE_NR,RCRD_ACRS,CSE_TYPE_NR,BLM_PROD,Created';
+const CLAIM_FIELDS='CSE_NAME,CSE_DISP,CSE_NR,RCRD_ACRS,CSE_TYPE_NR,BLM_PROD,Created,QLTY';
 const MINE_FIELDS='SITE_NAME,DEV_STAT,CODE_LIST,URL';
 // MRDS commodity codes → readable names (common metallic/industrial; unknown codes pass through).
 const COMMODITY={AU:'Gold',AG:'Silver',CU:'Copper',PB:'Lead',ZN:'Zinc',FE:'Iron',MO:'Molybdenum',
@@ -421,8 +421,18 @@ function setBase(key){
 document.querySelectorAll('#baseSeg button').forEach(b=> b.onclick=()=>setBase(b.dataset.base));
 
 /* ---- Claim layers --------------------------------------- */
+// A QLTY ("Data Quality") value starting with "0" is BLM's lowest-confidence footprint:
+// the claim is real, but its mapped square is only an approximate boundary. Draw those in
+// the same orange with a dashed outline so the edge reads as "claim is here, exact edges
+// uncertain"; everything else stays a solid square. (QLTY rides along in CLAIM_FIELDS.)
+const lowQlty = p => /^\s*0(?!\d)/.test(String((p && p.QLTY) || ''));
+function claimStyle(f){
+  const s = { color:'#e8821e', weight:1.5, fillColor:'#e8821e', fillOpacity:0.18 };
+  if(lowQlty(f.properties)) s.dashArray = '5,4';
+  return s;
+}
 const claimLayer = L.geoJSON(null, {
-  style:{ color:'#e8821e', weight:1.5, fillColor:'#e8821e', fillOpacity:0.18 },
+  style: claimStyle,
   onEachFeature: claimPopup
 }).addTo(map);
 const planLayer = L.geoJSON(null, {
@@ -434,12 +444,16 @@ const MINE_BLUE='#3d8fd1', MINE_ORANGE='#e8821e';
 const mineLayer = L.geoJSON(null, { pointToLayer: mineMarker, onEachFeature: minePopup });
 
 function fld(p, ...names){ for(const n of names){ if(p && p[n]!=null && p[n]!=='') return p[n]; } return null; }
-// Serial number is the reliable key for looking a case up in the official record.
-// Search-by-serial surfaces both the BLM MLRS record and The Diggings page for it.
+// Serial number is the reliable key for the case in the official record. The Diggings
+// publishes a record page per serial at /mines/<serial>, so we deep-link straight there
+// instead of running a web search.
 function moreInfoLink(cse){
   if(!cse) return '';
-  const url='https://www.google.com/search?q='+encodeURIComponent('BLM mining claim '+cse);
-  return `<br><a href="${url}" target="_blank" rel="noopener">More info ↗</a>`;
+  // Their URL is just the lowercased serial: CO106319443 -> /mines/co106319443. Brand-new
+  // cases can lag The Diggings' import, but the serial shown in the popup stays verifiable
+  // at the BLM (mlrs.blm.gov), which the Verify sheet links to.
+  const url='https://thediggings.com/mines/'+encodeURIComponent(String(cse).toLowerCase());
+  return `<br><a href="${url}" target="_blank" rel="noopener">View claim record ↗</a>`;
 }
 function claimPopup(f, layer){
   const p=f.properties||{};
@@ -632,21 +646,21 @@ async function fetchLayer(endpoint, bounds, outFields){
   if(!res.ok) throw new Error('HTTP '+res.status);
   return res.json();
 }
-// Drop MLRS records that are still "Filed" (never advanced to Active) AND are older than
-// 12 months. These are stale unprocessed filings unlikely to ever become active claims.
-// NOTE: We intentionally do NOT filter on QLTY=0 because Active claims can also have
-// QLTY=0 (low geometric precision) — filtering on that would drop legitimately staked ground.
-function filterMlrs(fc){
-  if(!fc||!fc.features) return fc;
-  const cutoff = (() => { const d=new Date(); d.setMonth(d.getMonth()-12); return d.getTime(); })();
-  fc.features = fc.features.filter(f => {
-    const p = f.properties||{};
-    const isFiled  = String(p.CSE_DISP||'').toLowerCase() === 'filed';
-    const oldFiling = p.Created!=null && Number(p.Created) < cutoff;
-    return !(isFiled && oldFiling);
-  });
-  return fc;
-}
+// We show every non-closed MLRS case the BLM service returns, with no extra client-side
+// filtering — that set is exactly the "is this ground legally claimed?" line we want.
+// Why we deliberately do NOT filter:
+//  • Case disposition: a claimant's exclusive right to the locatable minerals attaches at
+//    *location* (staking + recording with the county/BLM), not when BLM later flips the
+//    case to "Active". So "Filed", "Under Review", "Pending", etc. are all claimed ground
+//    where prospecting would be claim-jumping — hiding them under-warns, the dangerous
+//    error for this tool. (A "Filed" claim is mostly one whose land-status adjudication
+//    isn't finished, e.g. bulk-migrated from LR2000 — not an abandoned one.)
+//  • QLTY ("Data Quality"): rates how precisely the claim *polygon* was derived from its
+//    PLSS description (aliquot/midpoint/bucket geometry), NOT whether the claim is valid —
+//    ~22k Active claims carry QLTY=0. Filtering low QLTY would drop legitimately-staked
+//    ground for a mapping-precision reason that has nothing to do with legal status.
+// Closed/void/expired cases are already excluded server-side by the _Not_Closed endpoint,
+// which is precisely the legal boundary we want.
 
 let loading=false;
 async function refreshClaims(){
@@ -660,11 +674,11 @@ async function refreshClaims(){
     if(wantMines) tasks.push(fetchLayer(ENDPOINTS.mines,bounds,MINE_FIELDS));
     const r=await Promise.allSettled(tasks);
     const c=r[0], p=r[1], m=wantMines? r[2]:null;
-    if(c.status==='fulfilled'){ lastClaims=filterMlrs(c.value); claimLayer.clearLayers(); claimLayer.addData(lastClaims); saveOfflineData('claims',lastClaims); }
-    if(p.status==='fulfilled'){ lastPlans=filterMlrs(p.value); planLayer.clearLayers(); planLayer.addData(lastPlans); saveOfflineData('plans',lastPlans); }
+    if(c.status==='fulfilled'){ lastClaims=c.value; claimLayer.clearLayers(); claimLayer.addData(lastClaims); saveOfflineData('claims',lastClaims); }
+    if(p.status==='fulfilled'){ lastPlans=p.value; planLayer.clearLayers(); planLayer.addData(lastPlans); saveOfflineData('plans',lastPlans); }
     if(m && m.status==='fulfilled'){ mineLayer.clearLayers(); mineLayer.addData(m.value); saveOfflineData('mines',m.value); }
     const n=(lastClaims?.features?.length||0);
-    toast(n? `${n} claim${n>1?'s':''} in view`: 'No active claims in this view');
+    toast(n? `${n} claim${n>1?'s':''} in view`: 'No claims in this view');
     if(lastPos) evaluatePosition(lastPos);
   }catch(e){
     toast('Could not reach BLM. Trying saved data…');
