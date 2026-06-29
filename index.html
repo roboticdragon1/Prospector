@@ -199,6 +199,7 @@
       <label class="li"><input type="checkbox" id="lyrClaims" checked> <span class="sw" style="background:#e8821e33;border-color:#e8821e"></span> Active mining claims <span class="pill">avoid</span></label>
       <label class="li"><input type="checkbox" id="lyrPlans" checked> <span class="sw" style="background:#d23b2e33;border-color:#d23b2e"></span> Active operations (Plans of Ops) <span class="pill">avoid</span></label>
       <label class="li"><input type="checkbox" id="lyrSMA" checked> <span class="sw" style="background:linear-gradient(45deg,#e7d24a,#5a9e6f)"></span> Land ownership (who manages the surface)</label>
+      <label class="li"><input type="checkbox" id="lyrClosed" checked> <span class="sw" style="background:#c4b5fd"></span> Closed to rock collecting (parks, wilderness, refuges) <span class="pill">avoid</span></label>
       <label class="li"><input type="checkbox" id="lyrGeo"> <span class="sw" style="background:linear-gradient(45deg,#7e6,#69c)"></span> Geology — rock units (Macrostrat)</label>
       <label class="li"><input type="checkbox" id="lyrSgmc"> <span class="sw" style="background:linear-gradient(45deg,#e0b97d,#9c6b4f)"></span> Geology — state maps (USGS SGMC)</label>
       <label class="li"><input type="checkbox" id="lyrMines" checked> <span class="sw" style="background:radial-gradient(circle,#3d8fd1 55%,#fff 60%),radial-gradient(circle,#e8821e 55%,#fff 60%)"></span> Mine &amp; mineral sites (USGS) <span class="pill">info</span></label>
@@ -229,6 +230,13 @@
         <div class="li"><span class="sw" style="background:#ffffff;border-color:#888"></span> Private or unknown (no federal fill)</div>
       </div>
       <p style="margin-top:8px">The colored fill and boundary labels come from the BLM ownership layer. <b style="color:var(--tan)">Tap any spot</b> for the named public unit (national forest, BLM district, state trust land, park) from USGS PAD-US. <b style="color:var(--tan)">Private parcels aren't named</b> — owner-name data for private land isn't public.</p>
+    </div>
+
+    <div id="closedKey" style="display:none;margin-top:10px;padding:10px;border:1px solid var(--line);border-radius:10px">
+      <div class="meta" style="margin-bottom:6px">Closed to rock collecting</div>
+      <div class="li" style="margin-bottom:6px"><span class="sw" style="background:#c4b5fd"></span> Lavender fill = no collecting</div>
+      <p style="margin:0">The lavender shading marks federal land where collecting rocks, minerals, or fossils is prohibited or the ground is withdrawn from mineral entry: <b>National Parks, National Monuments, National Wildlife Refuges, and designated Wilderness / Wilderness Study Areas</b> (plus all Park Service &amp; Fish-&amp;-Wildlife land). Source: USGS PAD-US.</p>
+      <p style="margin-top:8px;border-left:3px solid var(--amber);padding-left:10px"><b style="color:var(--amber)">No lavender ≠ open to collect.</b> This shows the big federal closures only. Unshaded ground can still be off-limits — state or local rules, a special withdrawal, an active claim, or private land. The safe read is "lavender = definitely closed," never "unshaded = allowed." Confirm local rules before you dig.</p>
     </div>
 
     <p style="margin-top:14px">Claims load for the area on screen when you're zoomed in past ~town level. Pan, then tap <b>⟳ Claims</b> to refresh. Source: BLM Mineral &amp; Land Records System (MLRS) — the same official data The Diggings uses. Squares cover the claim's PLSS area and may be larger than the actual claim. A <b>dashed</b> square marks a claim whose BLM-mapped boundary is low-confidence (approximate edges) — the claim itself is just as real.</p>
@@ -407,6 +415,25 @@ const PAD_DESG = {
   NM:'National Monument', NRA:'National Recreation Area', SRMA:'Special Recreation Mgmt Area',
   ACEC:'Area of Critical Environmental Concern', CONE:'Conservation Easement', RECMGMT:'Recreation Mgmt Area'
 };
+// "Closed to rock collecting" overlay — the hard no-go categories for rockhounding, shaded on
+// top of the ownership fill so a Wilderness / park / refuge sitting on otherwise-open-looking
+// BLM or Forest ground reads at a glance. Same USGS PAD-US service as the ownership tap-popup.
+// Scope = hard closures only (collecting is prohibited, or the land is withdrawn from mineral
+// entry, across all of these):
+//   NP National Park · NM National Monument · NWR National Wildlife Refuge
+//   WA Wilderness · WSA Wilderness Study Area · SW State Wilderness
+// Plus any NPS- or FWS-managed parcel — collecting is barred service-wide (36 CFR 2.1 / refuge
+// regs), not just inside the headline "Park"/"Refuge" designation polygon. We deliberately do
+// NOT include National Recreation Areas, ACECs, National Forests, etc.: collecting is often
+// allowed there, and over-shading open ground would erode trust in the warning that matters.
+const CLOSED_DESG = { NP:'National Park', NM:'National Monument', NWR:'National Wildlife Refuge',
+                      WA:'Wilderness', WSA:'Wilderness Study Area', SW:'State Wilderness' };
+const CLOSED_WHERE  = "Des_Tp IN ('NP','NM','NWR','WA','WSA','SW') OR Mang_Name IN ('NPS','FWS')";
+const CLOSED_FIELDS = 'Unit_Nm,Des_Tp,Mang_Name';
+// True when a PAD-US attribute row is one of the closed-to-collecting categories above. Used
+// both to draw the overlay and to flag the land-owner tap-popup, so the shade and the tap agree.
+const isClosedAttr = a => !!a && ( !!CLOSED_DESG[String(a.Des_Tp||'').toUpperCase()]
+                                   || ['NPS','FWS'].includes(String(a.Mang_Name||'').toUpperCase()) );
 
 let currentBase = 'topo';
 function setBase(key){
@@ -442,6 +469,20 @@ const planLayer = L.geoJSON(null, {
 // USGS MRDS mine sites (off by default; loads with claims when toggled on).
 const MINE_BLUE='#3d8fd1', MINE_ORANGE='#e8821e';
 const mineLayer = L.geoJSON(null, { pointToLayer: mineMarker, onEachFeature: minePopup });
+
+// Closed-to-collecting shading. Its own map pane sits above the ownership/geology *tiles*
+// (zIndex 200) but below the claim/plan *vectors* (overlayPane 400), so the fill lays over the
+// ownership colors yet the orange claim squares stay readable on top. pointerEvents:none +
+// interactive:false make it purely visual — taps fall through to the land-owner/geology identify.
+// Filled a pastel lavender so closed ground reads as a soft "do-not-collect" wash over any ownership color.
+const CLOSED_FILL = '#c4b5fd';
+map.createPane('closedPane');
+map.getPane('closedPane').style.zIndex = 350;
+map.getPane('closedPane').style.pointerEvents = 'none';
+const closedLayer = L.geoJSON(null, {
+  pane:'closedPane', interactive:false,
+  style:{ color:'#a78bfa', weight:1, fillColor:CLOSED_FILL, fillOpacity:0.5 }
+});
 
 function fld(p, ...names){ for(const n of names){ if(p && p[n]!=null && p[n]!=='') return p[n]; } return null; }
 // Deep-link to the claim's authoritative record in BLM MLRS. The MLRS "Virtual Public Room"
@@ -581,7 +622,13 @@ function ownerHtml(res){
     const col = isMil ? '#d23b2e' : '#e8b04a';
     return `<br><span style="color:${col}">⚠ ${type?esc(type)+' — ':''}${esc(name)}</span>`;
   }).join('');
-  return head + overlays;
+  // Headline banner when this spot is one of the closed-to-collecting categories (the same set
+  // the red overlay shades), checked against both the owner and any designation overlaying it.
+  const closed = isClosedAttr(a) || (res.designations||[]).some(isClosedAttr);
+  const banner = closed
+    ? '<div style="margin:0 0 6px;color:#ef6b5e;font-weight:700">⛔ Closed to rock collecting</div>'
+    : '';
+  return banner + head + overlays;
 }
 function geoHtml(g){
   if(!g) return '<b>Geology</b><br><span class="pininfo">No mapped unit here</span>';
@@ -692,7 +739,33 @@ async function refreshClaims(){
   }finally{ loading=false; $('#btnReload').textContent='⟳ Claims'; }
 }
 $('#btnReload').onclick=refreshClaims;
-let moveT; map.on('moveend',()=>{ clearTimeout(moveT); moveT=setTimeout(()=>{ if(map.getZoom()>=11 && navigator.onLine) refreshClaims(); }, 700); });
+
+// Closed-to-collecting polygons for the current view, from the same PAD-US service the tap-popup
+// uses. maxAllowableOffset generalizes the (often large) park/refuge geometry to ~2 screen px so
+// the payload stays light; results are cached for offline like claims.
+let lastClosed=null;
+async function fetchClosed(bounds){
+  const b=bounds||map.getBounds();
+  const env=[b.getWest(),b.getSouth(),b.getEast(),b.getNorth()].join(',');
+  const offset=(2*360)/(256*Math.pow(2, map.getZoom()));   // ~2px, in degrees (outSR 4326)
+  const params=new URLSearchParams({
+    where:CLOSED_WHERE, geometry:env, geometryType:'esriGeometryEnvelope', inSR:'4326',
+    spatialRel:'esriSpatialRelIntersects', outFields:CLOSED_FIELDS,
+    returnGeometry:'true', outSR:'4326', maxAllowableOffset:String(offset), f:'geojson'
+  });
+  const res=await fetch(PAD_QUERY+'?'+params.toString());
+  if(!res.ok) throw new Error('HTTP '+res.status);
+  return res.json();
+}
+async function refreshClosed(){
+  if(!map.hasLayer(closedLayer)) return;
+  if(map.getZoom() < 8){ closedLayer.clearLayers(); return; }   // too coarse to be worth fetching
+  const draw=d=>{ if(d){ closedLayer.clearLayers(); closedLayer.addData(d); lastClosed=d; } };
+  if(!navigator.onLine){ draw(await loadOfflineData('closed')); return; }
+  try{ const d=await fetchClosed(); draw(d); saveOfflineData('closed',d); }
+  catch(e){ draw(await loadOfflineData('closed')); }
+}
+let moveT; map.on('moveend',()=>{ clearTimeout(moveT); moveT=setTimeout(()=>{ if(map.getZoom()>=11 && navigator.onLine) refreshClaims(); refreshClosed(); }, 700); });
 
 /* layer toggles */
 $('#lyrClaims').onchange=e=> e.target.checked? claimLayer.addTo(map):map.removeLayer(claimLayer);
@@ -724,10 +797,19 @@ $('#lyrSMA').onchange   =e=>{
   } else { map.removeLayer(smaLayer); }
   $('#smaKey').style.display = e.target.checked? 'block':'none';
 };
+$('#lyrClosed').onchange=e=>{
+  if(e.target.checked){ closedLayer.addTo(map); refreshClosed(); }
+  else map.removeLayer(closedLayer);
+  $('#closedKey').style.display = e.target.checked? 'block':'none';
+};
 // Land ownership ships checked-by-default: run its toggle handler once on load so the layer,
 // its key panel, and z-order are set exactly as if the user had ticked the box (tiles only,
 // no data fetch).
 if($('#lyrSMA').checked) $('#lyrSMA').dispatchEvent(new Event('change'));
+// Closed-areas overlay also ships checked-by-default: show the layer + its key now, but defer the
+// first data fetch to init() — refreshClosed() touches loadOfflineData/saveOfflineData, which are
+// declared further down and would be in the temporal dead zone if called during this top-level run.
+if($('#lyrClosed').checked){ closedLayer.addTo(map); $('#closedKey').style.display='block'; }
 // Mines also ship checked-by-default but lazy: show the layer + key now, then defer the
 // network fetch to the first map move (the moveend handler fetches mines whenever their
 // layer is on the map). Offline there's no move-driven fetch, so pull cached mines now.
@@ -1245,6 +1327,9 @@ window.addEventListener('offline',()=>{ toast('Offline — using saved maps & cl
     // Mines (when their layer is on) are loaded from cache by the layer's own toggle handler.
     setStatus('','Offline','Using saved maps & claims');
   }
+  // Fill the closed-areas overlay for the opening view (online fetch, or cached when offline).
+  // Deferred here so loadOfflineData/saveOfflineData are past their temporal dead zone.
+  refreshClosed();
 })();
 </script>
 </body>
