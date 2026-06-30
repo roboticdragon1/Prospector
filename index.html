@@ -481,7 +481,7 @@ map.getPane('closedPane').style.zIndex = 350;
 map.getPane('closedPane').style.pointerEvents = 'none';
 const closedLayer = L.geoJSON(null, {
   pane:'closedPane', interactive:false,
-  style:{ color:'#a78bfa', weight:1, opacity:0.50, fillColor:CLOSED_FILL, fillOpacity:0.125 }
+  style:{ color:'#a78bfa', weight:1, opacity:0.25, fillColor:CLOSED_FILL, fillOpacity:0.35 }
 });
 
 function fld(p, ...names){ for(const n of names){ if(p && p[n]!=null && p[n]!=='') return p[n]; } return null; }
