@@ -29,7 +29,7 @@ The app is a classic `<script>`, so its top-level names live in the page's globa
 - `map` — the Leaflet map (`map.setView([lat,lng], z)`, `map.getBounds()`)
 - `refreshClaims()` — fetch + render claims/plans (and mines if that layer is on) for the current view
 - `claimLayer` / `planLayer` / `mineLayer` / `pinGroup` — the GeoJSON layers (`claimLayer.eachLayer(l => l.feature.properties / l.options.dashArray / l.getPopup().getContent())`)
-- `setBase('streets'|'imagery'|'topo')`, and helpers `lowQlty(props)`, `moreInfoLink(serial)`
+- `setBase('streets'|'imagery'|'topo')`, and helpers `lowQlty(props)`, `moreInfoLink(props)`
 Edit the `SCENARIO` block in `driver.mjs` for any other check (open a popup, toggle a layer, drive search, etc.).
 
 ## Known-good landmarks

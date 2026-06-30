@@ -327,7 +327,7 @@ const ENDPOINTS = {
   // USGS MRDS (Mineral Resources Data System) — physical mine sites/prospects, point data w/ commodities.
   mines:  'https://services.arcgis.com/v01gqwM5QqNysAAi/ArcGIS/rest/services/Mineral_Resources_Data_System_MRDS_Compact_Version/FeatureServer/0/query'
 };
-const CLAIM_FIELDS='CSE_NAME,CSE_DISP,CSE_NR,RCRD_ACRS,CSE_TYPE_NR,BLM_PROD,Created,QLTY';
+const CLAIM_FIELDS='CSE_NAME,CSE_DISP,CSE_NR,RCRD_ACRS,CSE_TYPE_NR,BLM_PROD,Created,QLTY,SF_ID';
 const MINE_FIELDS='SITE_NAME,DEV_STAT,CODE_LIST,URL';
 // MRDS commodity codes → readable names (common metallic/industrial; unknown codes pass through).
 const COMMODITY={AU:'Gold',AG:'Silver',CU:'Copper',PB:'Lead',ZN:'Zinc',FE:'Iron',MO:'Molybdenum',
@@ -444,16 +444,20 @@ const MINE_BLUE='#3d8fd1', MINE_ORANGE='#e8821e';
 const mineLayer = L.geoJSON(null, { pointToLayer: mineMarker, onEachFeature: minePopup });
 
 function fld(p, ...names){ for(const n of names){ if(p && p[n]!=null && p[n]!=='') return p[n]; } return null; }
-// Serial number is the reliable key for the case in the official record. The Diggings
-// publishes a record page per serial at /mines/<serial>, so we deep-link straight there
-// instead of running a web search.
-function moreInfoLink(cse){
-  if(!cse) return '';
-  // Their URL is just the lowercased serial: CO106319443 -> /mines/co106319443. Brand-new
-  // cases can lag The Diggings' import, but the serial shown in the popup stays verifiable
-  // at the BLM (mlrs.blm.gov), which the Verify sheet links to.
-  const url='https://thediggings.com/mines/'+encodeURIComponent(String(cse).toLowerCase());
-  return `<br><a href="${url}" target="_blank" rel="noopener">View claim record ↗</a>`;
+// Deep-link to the claim's authoritative record in BLM MLRS. The MLRS "Virtual Public Room"
+// serves every case publicly (no login) at /s/detail/<Salesforce case id>, which redirects
+// to the full BLM case page. SF_ID is that id and is present on every case — including the
+// brand-new MLRS claims that have no legacy serial. (We previously linked The Diggings, but
+// its record URLs key off the *legacy* LR2000 serial, so new MLRS serials 404 there.)
+// If SF_ID is ever missing, fall back to the MLRS serial-number search.
+function moreInfoLink(p){
+  const sf=fld(p,'SF_ID');
+  const cse=fld(p,'CSE_NR','CSE_SERIAL_NR');
+  let url;
+  if(sf)       url='https://mlrs.blm.gov/s/detail/'+encodeURIComponent(sf);
+  else if(cse) url='https://mlrs.blm.gov/s/global-search/'+encodeURIComponent(cse);
+  else return '';
+  return `<br><a href="${url}" target="_blank" rel="noopener">View BLM case record ↗</a>`;
 }
 function claimPopup(f, layer){
   const p=f.properties||{};
@@ -468,7 +472,7 @@ function claimPopup(f, layer){
     `<br>Status: ${esc(disp)} ${acres?('· '+acres):''}`+
     (cse? `<br><span class="pininfo">${esc(cse)}</span>`:'')+
     `<br><span style="color:#e8821e">Active claim — avoid</span>`+
-    moreInfoLink(cse)
+    moreInfoLink(p)
   );
 }
 function planPopup(f, layer){
@@ -482,7 +486,7 @@ function planPopup(f, layer){
     `<br>${kind? esc(kind):'Plan of Operations'} · ${esc(disp)}`+
     (cse? `<br><span class="pininfo">${esc(cse)}</span>`:'')+
     `<br><span style="color:#d23b2e">Active operation — avoid</span>`+
-    moreInfoLink(cse)
+    moreInfoLink(p)
   );
 }
 const esc = s => String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
