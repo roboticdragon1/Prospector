@@ -93,9 +93,20 @@
   .btn.ghost{background:none}
   .thumbs{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
   .thumbs img{width:72px;height:72px;object-fit:cover;border-radius:10px;border:1px solid var(--line)}
-  .legend{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+  .legend{display:flex;flex-direction:column;gap:4px;margin-top:8px}
   .legend .li{display:flex;align-items:center;gap:10px;font-size:13px}
   .sw{width:16px;height:16px;border-radius:4px;flex:none;border:1px solid rgba(255,255,255,.25)}
+  #layerList .li{display:block;background:var(--surface2);border-radius:10px;border:1px solid var(--line);transition:opacity .15s}
+  #layerList .li.is-dragging{opacity:.3}
+  .drag-ph{border-radius:10px;border:2px dashed var(--amber);background:transparent}
+  .li-row{display:flex;align-items:center;gap:8px;padding:8px 10px 4px;font-size:13px}
+  .li-row label{flex:1;display:flex;align-items:center;gap:8px;cursor:pointer;min-width:0}
+  .drag-handle{color:var(--muted);font-size:13px;flex:none;touch-action:none;user-select:none;cursor:grab;padding:2px 4px;letter-spacing:2px;line-height:1}
+  .drag-handle:active{cursor:grabbing}
+  .opacity-row{display:flex;align-items:center;gap:6px;padding:0 10px 7px 42px}
+  .opacity-row input[type=range]{flex:1;accent-color:var(--amber);cursor:pointer}
+  .opacity-row .opval{font-family:var(--mono);font-size:10px;color:var(--muted);width:30px;text-align:right;flex:none}
+  .opacity-row.dim{opacity:.35;pointer-events:none}
   .meta{font-family:var(--mono);font-size:12px;color:var(--tan)}
   .toast{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom) + 150px);z-index:3000;
     background:#10140e;border:1px solid var(--line);color:var(--text);padding:10px 14px;border-radius:12px;font-size:13px;
@@ -195,15 +206,39 @@
   <div class="card">
     <div class="grip"></div>
     <h2><span class="eyebrow">Map layers</span>What's on the map</h2>
-    <div class="legend">
-      <label class="li"><input type="checkbox" id="lyrClaims" checked> <span class="sw" style="background:#e8821e33;border-color:#e8821e"></span> Active mining claims <span class="pill">avoid</span></label>
-      <label class="li"><input type="checkbox" id="lyrPlans" checked> <span class="sw" style="background:#d23b2e33;border-color:#d23b2e"></span> Active operations (Plans of Ops) <span class="pill">avoid</span></label>
-      <label class="li"><input type="checkbox" id="lyrSMA" checked> <span class="sw" style="background:linear-gradient(45deg,#e7d24a,#5a9e6f)"></span> Land ownership (who manages the surface)</label>
-      <label class="li"><input type="checkbox" id="lyrClosed" checked> <span class="sw" style="background:#c4b5fd"></span> Closed to rock collecting (parks, wilderness, refuges) <span class="pill">avoid</span></label>
-      <label class="li"><input type="checkbox" id="lyrGeo"> <span class="sw" style="background:linear-gradient(45deg,#7e6,#69c)"></span> Geology — rock units (Macrostrat)</label>
-      <label class="li"><input type="checkbox" id="lyrSgmc"> <span class="sw" style="background:linear-gradient(45deg,#e0b97d,#9c6b4f)"></span> Geology — state maps (USGS SGMC)</label>
-      <label class="li"><input type="checkbox" id="lyrMines" checked> <span class="sw" style="background:radial-gradient(circle,#3d8fd1 55%,#fff 60%),radial-gradient(circle,#e8821e 55%,#fff 60%)"></span> Mine &amp; mineral sites (USGS) <span class="pill">info</span></label>
-      <label class="li"><input type="checkbox" id="lyrPins" checked> <span class="sw" style="background:#c8b88a"></span> My note pins</label>
+    <div class="legend" id="layerList">
+      <div class="li" data-lyr="lyrClaims">
+        <div class="li-row"><span class="drag-handle" title="Drag to reorder">⠿</span><label><input type="checkbox" id="lyrClaims" checked> <span class="sw" style="background:#e8821e33;border-color:#e8821e"></span> Active mining claims <span class="pill">avoid</span></label></div>
+        <div class="opacity-row"><input type="range" class="lyr-opacity" data-lyr="lyrClaims" min="0" max="1" step="0.05" value="1"> <span class="opval">100%</span></div>
+      </div>
+      <div class="li" data-lyr="lyrPlans">
+        <div class="li-row"><span class="drag-handle" title="Drag to reorder">⠿</span><label><input type="checkbox" id="lyrPlans" checked> <span class="sw" style="background:#d23b2e33;border-color:#d23b2e"></span> Active operations (Plans of Ops) <span class="pill">avoid</span></label></div>
+        <div class="opacity-row"><input type="range" class="lyr-opacity" data-lyr="lyrPlans" min="0" max="1" step="0.05" value="1"> <span class="opval">100%</span></div>
+      </div>
+      <div class="li" data-lyr="lyrSMA">
+        <div class="li-row"><span class="drag-handle" title="Drag to reorder">⠿</span><label><input type="checkbox" id="lyrSMA" checked> <span class="sw" style="background:linear-gradient(45deg,#e7d24a,#5a9e6f)"></span> Land ownership (who manages the surface)</label></div>
+        <div class="opacity-row"><input type="range" class="lyr-opacity" data-lyr="lyrSMA" min="0" max="1" step="0.05" value="0.45"> <span class="opval">45%</span></div>
+      </div>
+      <div class="li" data-lyr="lyrClosed">
+        <div class="li-row"><span class="drag-handle" title="Drag to reorder">⠿</span><label><input type="checkbox" id="lyrClosed" checked> <span class="sw" style="background:#c4b5fd"></span> Closed to rock collecting (parks, wilderness, refuges) <span class="pill">avoid</span></label></div>
+        <div class="opacity-row"><input type="range" class="lyr-opacity" data-lyr="lyrClosed" min="0" max="1" step="0.05" value="1"> <span class="opval">100%</span></div>
+      </div>
+      <div class="li" data-lyr="lyrGeo">
+        <div class="li-row"><span class="drag-handle" title="Drag to reorder">⠿</span><label><input type="checkbox" id="lyrGeo"> <span class="sw" style="background:linear-gradient(45deg,#7e6,#69c)"></span> Geology — rock units (Macrostrat)</label></div>
+        <div class="opacity-row dim"><input type="range" class="lyr-opacity" data-lyr="lyrGeo" min="0" max="1" step="0.05" value="0.5"> <span class="opval">50%</span></div>
+      </div>
+      <div class="li" data-lyr="lyrSgmc">
+        <div class="li-row"><span class="drag-handle" title="Drag to reorder">⠿</span><label><input type="checkbox" id="lyrSgmc"> <span class="sw" style="background:linear-gradient(45deg,#e0b97d,#9c6b4f)"></span> Geology — state maps (USGS SGMC)</label></div>
+        <div class="opacity-row dim"><input type="range" class="lyr-opacity" data-lyr="lyrSgmc" min="0" max="1" step="0.05" value="0.5"> <span class="opval">50%</span></div>
+      </div>
+      <div class="li" data-lyr="lyrMines">
+        <div class="li-row"><span class="drag-handle" title="Drag to reorder">⠿</span><label><input type="checkbox" id="lyrMines" checked> <span class="sw" style="background:radial-gradient(circle,#3d8fd1 55%,#fff 60%),radial-gradient(circle,#e8821e 55%,#fff 60%)"></span> Mine &amp; mineral sites (USGS) <span class="pill">info</span></label></div>
+        <div class="opacity-row"><input type="range" class="lyr-opacity" data-lyr="lyrMines" min="0" max="1" step="0.05" value="1"> <span class="opval">100%</span></div>
+      </div>
+      <div class="li" data-lyr="lyrPins">
+        <div class="li-row"><span class="drag-handle" title="Drag to reorder">⠿</span><label><input type="checkbox" id="lyrPins" checked> <span class="sw" style="background:#c8b88a"></span> My note pins</label></div>
+        <div class="opacity-row"><input type="range" class="lyr-opacity" data-lyr="lyrPins" min="0" max="1" step="0.05" value="1"> <span class="opval">100%</span></div>
+      </div>
     </div>
 
     <p style="border-left:3px solid var(--tan);padding-left:10px"><b style="color:var(--tan)">Tap any spot on the map</b> to identify the land owner (public agency or private) and the geologic rock unit beneath it. These don't need the ownership/geology layers turned on, but they do need a connection.</p>
@@ -452,9 +487,10 @@ document.querySelectorAll('#baseSeg button').forEach(b=> b.onclick=()=>setBase(b
 // the claim is real, but its mapped square is only an approximate boundary. Draw those in
 // the same orange with a dashed outline so the edge reads as "claim is here, exact edges
 // uncertain"; everything else stays a solid square. (QLTY rides along in CLAIM_FIELDS.)
+let claimOpacity=1, planOpacity=1, closedOpacity=1;
 const lowQlty = p => /^\s*0(?!\d)/.test(String((p && p.QLTY) || ''));
 function claimStyle(f){
-  const s = { color:'#e8821e', weight:1.5, fillColor:'#e8821e', fillOpacity:0.18 };
+  const s = { color:'#e8821e', weight:1.5, fillColor:'#e8821e', fillOpacity:0.18*claimOpacity, opacity:claimOpacity };
   if(lowQlty(f.properties)) s.dashArray = '5,4';
   return s;
 }
@@ -463,7 +499,7 @@ const claimLayer = L.geoJSON(null, {
   onEachFeature: claimPopup
 }).addTo(map);
 const planLayer = L.geoJSON(null, {
-  style:{ color:'#d23b2e', weight:1.8, fillColor:'#d23b2e', fillOpacity:0.22 },
+  style:()=>({ color:'#d23b2e', weight:1.8, fillColor:'#d23b2e', fillOpacity:0.22*planOpacity, opacity:planOpacity }),
   onEachFeature: planPopup
 }).addTo(map);
 // USGS MRDS mine sites (off by default; loads with claims when toggled on).
@@ -479,9 +515,11 @@ const CLOSED_FILL = '#c4b5fd';
 map.createPane('closedPane');
 map.getPane('closedPane').style.zIndex = 350;
 map.getPane('closedPane').style.pointerEvents = 'none';
+map.createPane('minePane'); map.getPane('minePane').style.zIndex = 410;
+map.createPane('pinPane');  map.getPane('pinPane').style.zIndex = 420;
 const closedLayer = L.geoJSON(null, {
   pane:'closedPane', interactive:false,
-  style:{ color:'#a78bfa', weight:1, opacity:0.25, fillColor:CLOSED_FILL, fillOpacity:0.35 }
+  style:()=>({ color:'#a78bfa', weight:1, opacity:0.25*closedOpacity, fillColor:CLOSED_FILL, fillOpacity:0.35*closedOpacity })
 });
 
 function fld(p, ...names){ for(const n of names){ if(p && p[n]!=null && p[n]!=='') return p[n]; } return null; }
@@ -542,7 +580,7 @@ function commodities(codes){
 }
 function mineMarker(f, latlng){
   const active=mineActive(f.properties&&f.properties.DEV_STAT);
-  return L.circleMarker(latlng,{ radius:6, weight:2, color:'#fff',
+  return L.circleMarker(latlng,{ pane:'minePane', radius:6, weight:2, color:'#fff',
     fillColor: active? MINE_ORANGE:MINE_BLUE, fillOpacity:.95 });
 }
 function minePopup(f, layer){
@@ -818,6 +856,105 @@ if($('#lyrMines').checked){
   if(!navigator.onLine) loadOfflineData('mines').then(om=>{ if(om){ mineLayer.clearLayers(); mineLayer.addData(om); } });
 }
 
+/* ---- Layer opacity + drag-to-reorder ---- */
+const OPACITY_DEFAULTS={lyrClaims:1,lyrPlans:1,lyrSMA:0.45,lyrClosed:1,lyrGeo:0.5,lyrSgmc:0.5,lyrMines:1,lyrPins:1};
+
+function applyLayerOpacity(id,v){
+  v=parseFloat(v);
+  switch(id){
+    case 'lyrClaims': claimOpacity=v; claimLayer.eachLayer(l=>l.setStyle(claimStyle(l.feature))); break;
+    case 'lyrPlans':  planOpacity=v; planLayer.eachLayer(l=>l.setStyle({color:'#d23b2e',weight:1.8,fillColor:'#d23b2e',fillOpacity:0.22*v,opacity:v})); break;
+    case 'lyrSMA':    smaLayer.setOpacity(v); break;
+    case 'lyrClosed': closedOpacity=v; closedLayer.eachLayer(l=>l.setStyle({color:'#a78bfa',weight:1,opacity:0.25*v,fillColor:CLOSED_FILL,fillOpacity:0.35*v})); break;
+    case 'lyrGeo':    geoLayer.setOpacity(v); break;
+    case 'lyrSgmc':   sgmcLayer.setOpacity(v); break;
+    case 'lyrMines':  map.getPane('minePane').style.opacity=v; break;
+    case 'lyrPins':   map.getPane('pinPane').style.opacity=v; break;
+  }
+}
+function saveLayerOpacities(){
+  const vals={};
+  document.querySelectorAll('.lyr-opacity').forEach(inp=>{ vals[inp.dataset.lyr]=parseFloat(inp.value); });
+  localStorage.setItem('lyrOpacities',JSON.stringify(vals));
+}
+function loadLayerOpacities(){
+  try{
+    const saved=JSON.parse(localStorage.getItem('lyrOpacities'))||{};
+    document.querySelectorAll('.lyr-opacity').forEach(inp=>{
+      const id=inp.dataset.lyr, v=saved[id]??OPACITY_DEFAULTS[id]??1;
+      inp.value=v;
+      inp.nextElementSibling.textContent=Math.round(v*100)+'%';
+      applyLayerOpacity(id,v);
+    });
+  }catch(e){}
+}
+function saveLayerOrder(){
+  const order=[...document.querySelectorAll('#layerList .li[data-lyr]')].map(el=>el.dataset.lyr);
+  localStorage.setItem('lyrOrder',JSON.stringify(order));
+}
+function loadLayerOrder(){
+  try{
+    const saved=JSON.parse(localStorage.getItem('lyrOrder'));
+    if(!Array.isArray(saved)) return;
+    const list=document.getElementById('layerList');
+    saved.forEach(id=>{ const el=list.querySelector(`.li[data-lyr="${id}"]`); if(el) list.appendChild(el); });
+  }catch(e){}
+}
+function initLayerSort(){
+  document.getElementById('layerList').addEventListener('pointerdown',e=>{
+    const handle=e.target.closest('.drag-handle');
+    if(!handle) return;
+    const li=handle.closest('.li[data-lyr]');
+    if(!li) return;
+    e.preventDefault();
+    const rect=li.getBoundingClientRect(), offsetY=e.clientY-rect.top;
+    const ph=document.createElement('div'); ph.className='drag-ph'; ph.style.height=rect.height+'px';
+    li.after(ph);
+    li.classList.add('is-dragging');
+    li.style.position='fixed'; li.style.left=rect.left+'px'; li.style.width=rect.width+'px';
+    li.style.top=rect.top+'px'; li.style.zIndex='9999';
+    handle.setPointerCapture(e.pointerId);
+    function onMove(ev){
+      li.style.top=(ev.clientY-offsetY)+'px';
+      const midY=ev.clientY-offsetY+rect.height/2;
+      let after=null;
+      for(const sib of document.querySelectorAll('#layerList .li[data-lyr]:not(.is-dragging)')){
+        const r=sib.getBoundingClientRect();
+        if(midY<r.top+r.height/2){after=sib;break;}
+      }
+      const list=document.getElementById('layerList');
+      if(after) list.insertBefore(ph,after); else list.appendChild(ph);
+    }
+    function onUp(){
+      handle.removeEventListener('pointermove',onMove);
+      li.classList.remove('is-dragging');
+      ['position','left','width','top','zIndex'].forEach(p=>li.style[p]='');
+      ph.replaceWith(li);
+      saveLayerOrder();
+    }
+    handle.addEventListener('pointermove',onMove);
+    handle.addEventListener('pointerup',onUp,{once:true});
+    handle.addEventListener('pointercancel',onUp,{once:true});
+  });
+}
+// Sync opacity-row dim state when a layer checkbox changes
+document.getElementById('layerList').addEventListener('change',e=>{
+  const cb=e.target.closest('input[type="checkbox"]');
+  if(!cb) return;
+  const li=cb.closest('.li[data-lyr]');
+  if(!li) return;
+  li.querySelector('.opacity-row').classList.toggle('dim',!cb.checked);
+});
+// Wire opacity slider events
+document.querySelectorAll('.lyr-opacity').forEach(inp=>{
+  inp.addEventListener('input',()=>{
+    const v=parseFloat(inp.value);
+    inp.nextElementSibling.textContent=Math.round(v*100)+'%';
+    applyLayerOpacity(inp.dataset.lyr,v);
+    saveLayerOpacities();
+  });
+});
+
 /* ---- GPS + ground-status banner ------------------------- */
 let watchId=null, meMarker=null, accCircle=null, lastPos=null;
 let compassHeading=null, gpsHeading=null, orientOn=false;
@@ -992,7 +1129,7 @@ const pinIcon=L.divIcon({className:'',html:'<div style="font-size:24px;filter:dr
 let dropMode=false, editing=null, pendingPhotos=[];
 
 function renderPin(pin){
-  const m=L.marker([pin.lat,pin.lng],{icon:pinIcon}).addTo(pinGroup);
+  const m=L.marker([pin.lat,pin.lng],{icon:pinIcon,pane:'pinPane'}).addTo(pinGroup);
   m.on('click',()=>openPinEditor(pin));
   m._pinId=pin.id;
 }
@@ -1313,6 +1450,9 @@ $('#btnGps').addEventListener('touchend',()=>clearTimeout(lp));
 /* ---- Boot ----------------------------------------------- */
 window.addEventListener('online', ()=>{ toast('Back online'); });
 window.addEventListener('offline',()=>{ toast('Offline — using saved maps & claims'); });
+loadLayerOrder();
+loadLayerOpacities();
+initLayerSort();
 (async function init(){
   // Ask the browser to keep our IndexedDB (pins, photos, saved claims) in persistent storage
   // so it isn't evicted as "best-effort" data. Best-effort, fire-and-forget — no user prompt.
