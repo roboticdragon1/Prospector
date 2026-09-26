@@ -538,21 +538,53 @@ function moreInfoLink(p){
   else return '';
   return `<br><a href="${url}" target="_blank" rel="noopener">View BLM case record ↗</a>`;
 }
-function claimPopup(f, layer){
-  const p=f.properties||{};
+function claimHtml(p){
   const name=fld(p,'CSE_NAME','CSE_NM')||'Unnamed claim';
   const kind=fld(p,'BLM_PROD');               // Lode Claim / Placer Claim / Mill Site / Tunnel Site
   const disp=fld(p,'CSE_DISP')||'—';
   const cse=fld(p,'CSE_NR','CSE_SERIAL_NR')||'';
   const ac=fld(p,'RCRD_ACRS'); const acres= ac!=null? (Math.round(ac*10)/10)+' ac':'';
-  layer.bindPopup(
-    `<b>${esc(name)}</b>`+
+  return `<b>${esc(name)}</b>`+
     (kind? `<br>Type: ${esc(kind)}`:'')+
     `<br>Status: ${esc(disp)} ${acres?('· '+acres):''}`+
     (cse? `<br><span class="pininfo">${esc(cse)}</span>`:'')+
-    `<br><span style="color:#e8821e">Active claim — avoid</span>`+
-    moreInfoLink(p)
-  );
+    moreInfoLink(p);
+}
+// Point-in-polygon (ray cast) for GeoJSON Polygon / MultiPolygon, honoring holes.
+function ringHas(r, x, y){
+  let inside=false;
+  for(let i=0,j=r.length-1;i<r.length;j=i++){
+    const xi=r[i][0], yi=r[i][1], xj=r[j][0], yj=r[j][1];
+    if((yi>y)!==(yj>y) && x<(xj-xi)*(y-yi)/(yj-yi)+xi) inside=!inside;
+  }
+  return inside;
+}
+const polyHas=(rings,x,y)=> ringHas(rings[0],x,y) && !rings.slice(1).some(h=>ringHas(h,x,y));
+function geomHas(g, ll){
+  if(!g) return false;
+  if(g.type==='Polygon') return polyHas(g.coordinates, ll.lng, ll.lat);
+  if(g.type==='MultiPolygon') return g.coordinates.some(c=>polyHas(c, ll.lng, ll.lat));
+  return false;
+}
+// BLM maps most claims to the PLSS aliquot block they were filed against (e.g. the SE¼ of a
+// section), so several separate claims in one block share an *identical* polygon and stack on
+// the map — only the top one would be tappable. So a tap lists every claim covering that point.
+// The tapped feature is always included, even when the tap lands on its stroke just outside.
+const claimPopupBox=L.popup({ maxWidth:280, autoPanPadding:[24,80] });
+function claimPopup(f, layer){
+  layer.on('click', e=>{
+    L.DomEvent.stop(e);
+    const hits=[f];
+    claimLayer.eachLayer(l=>{ if(l.feature!==f && geomHas(l.feature.geometry, e.latlng)) hits.push(l.feature); });
+    hits.sort((a,b)=>String(fld(a.properties,'CSE_NAME')||'').localeCompare(String(fld(b.properties,'CSE_NAME')||''), undefined, {numeric:true}));
+    const warn=`<span style="color:#e8821e">Active claim${hits.length>1?'s':''} — avoid</span>`;
+    const body= hits.length===1
+      ? claimHtml(f.properties||{})+'<br>'+warn
+      : `<b>${hits.length} claims at this spot</b><br>${warn}`+
+        `<br><span class="pininfo">Overlapping or stacked claims cover this point</span>`+
+        hits.map(h=>'<hr style="border:none;border-top:1px solid var(--line);margin:8px 0">'+claimHtml(h.properties||{})).join('');
+    claimPopupBox.setLatLng(e.latlng).setContent('<div class="id-scroll">'+body+'</div>').openOn(map);
+  });
 }
 function planPopup(f, layer){
   const p=f.properties||{};

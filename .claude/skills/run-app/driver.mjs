@@ -94,7 +94,7 @@ const summary = await page.evaluate(() => {
     o.total++;
     if (dash) { o.dashed++; if (o.sampleDashed.length < 4) o.sampleDashed.push({ name: p.CSE_NAME, qlty: String(p.QLTY).slice(0, 8), dash }); }
     else o.solid++;
-    if (!o.sampleLink) { const h = l.getPopup() && l.getPopup().getContent(); const m = h && h.match(/href="([^"]+)"/); if (m) o.sampleLink = { name: p.CSE_NAME, href: m[1] }; }
+    if (!o.sampleLink) { const h = moreInfoLink(p); const m = h && h.match(/href="([^"]+)"/); if (m) o.sampleLink = { name: p.CSE_NAME, href: m[1] }; }
   });
   return o;
 });
