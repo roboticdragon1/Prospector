@@ -897,10 +897,11 @@ if($('#lyrSMA').checked) $('#lyrSMA').dispatchEvent(new Event('change'));
 if($('#lyrClosed').checked){ closedLayer.addTo(map); $('#closedKey').style.display='block'; }
 // Mines also ship checked-by-default but lazy: show the layer + key now, then defer the
 // network fetch to the first map move (the moveend handler fetches mines whenever their
-// layer is on the map). Offline there's no move-driven fetch, so pull cached mines now.
+// layer is on the map). Offline there's no move-driven fetch, so init() pulls cached mines —
+// not here: loadOfflineData is still in its temporal dead zone during this top-level run, and
+// the ReferenceError would abort the rest of the script (every handler + init) on offline boot.
 if($('#lyrMines').checked){
   mineLayer.addTo(map); $('#minesKey').style.display='block';
-  if(!navigator.onLine) loadOfflineData('mines').then(om=>{ if(om){ mineLayer.clearLayers(); mineLayer.addData(om); } });
 }
 
 /* ---- Layer opacity + drag-to-reorder ---- */
@@ -1511,7 +1512,7 @@ initLayerSort();
   if(!navigator.onLine){
     const oc=await loadOfflineData('claims'); if(oc){ claimLayer.addData(oc); lastClaims=oc; }
     const op=await loadOfflineData('plans');  if(op){ planLayer.addData(op);  lastPlans=op; }
-    // Mines (when their layer is on) are loaded from cache by the layer's own toggle handler.
+    if(map.hasLayer(mineLayer)){ const om=await loadOfflineData('mines'); if(om) mineLayer.addData(om); }
     setStatus('','Offline','Using saved maps & claims');
   }
   // Fill the closed-areas overlay for the opening view (online fetch, or cached when offline).
