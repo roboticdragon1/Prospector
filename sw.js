@@ -104,24 +104,41 @@ self.addEventListener('fetch', (event) => {
   // Everything else (incl. BLM ArcGIS queries): just go to network; app handles offline fallback.
 });
 
-// Allow the page to pre-cache a batch of tile URLs for an area ("Save area offline").
+// Allow the page to pre-cache a batch of tile URLs for a saved area ("Save area offline").
+// `id` is the saved area's id, echoed back so the page knows which area finished; `ok` counts
+// tiles actually stored, so a partial save (lost signal, quota) is reported, not hidden.
 self.addEventListener('message', (event) => {
   const data = event.data || {};
+  const id = data.id;
   if (data.type === 'CACHE_TILES' && Array.isArray(data.urls)) {
     event.waitUntil((async () => {
       const cache = await caches.open(TILE_CACHE);
-      let done = 0;
+      const total = data.urls.length;
+      let done = 0, ok = 0;
       for (const u of data.urls) {
-        try {
-          const res = await fetch(new Request(u, { mode: 'no-cors' }));
-          if (res && (res.ok || res.type === 'opaque')) await cache.put(u, res.clone());
-        } catch (e) { /* skip */ }
+        // One retry per tile: the tile servers (USGS especially) drop the odd request, and on
+        // marginal signal a single blip shouldn't leave a hole in the saved map.
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            if (await cache.match(u)) { ok++; break; }
+            const res = await fetch(new Request(u, { mode: 'no-cors' }));
+            if (res && (res.ok || res.type === 'opaque')) { await cache.put(u, res.clone()); ok++; break; }
+          } catch (e) { /* retry once, then skip */ }
+        }
         done++;
         if (done % 25 === 0 && event.source) {
-          event.source.postMessage({ type: 'CACHE_PROGRESS', done, total: data.urls.length });
+          event.source.postMessage({ type: 'CACHE_PROGRESS', id, done, ok, total });
         }
       }
-      if (event.source) event.source.postMessage({ type: 'CACHE_DONE', done, total: data.urls.length });
+      if (event.source) event.source.postMessage({ type: 'CACHE_DONE', id, done, ok, total });
+    })());
+  }
+  // Drop specific tiles — used when one saved area is deleted (the page sends only the tiles
+  // no other saved area still needs).
+  if (data.type === 'DELETE_TILES' && Array.isArray(data.urls)) {
+    event.waitUntil((async () => {
+      const cache = await caches.open(TILE_CACHE);
+      for (const u of data.urls) { try { await cache.delete(u); } catch (e) { /* skip */ } }
     })());
   }
   if (data.type === 'CLEAR_TILES') {

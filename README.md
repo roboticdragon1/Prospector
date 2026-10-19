@@ -7,7 +7,7 @@ A field web app that shows whether the ground under your GPS is **open**, **clai
 - **Crosshair (◎)** — start/stop GPS. The top banner turns green (open), amber (active claim), or red (active operation) based on the claim polygons loaded for your area. **Tap the banner** to verify the exact spot at the BLM.
 - **⟳ Claims** — refresh claims for the area on screen. Claims auto-load when you pan while zoomed in and online.
 - **📍** — drop-pin mode: tap the map to log a note + photos.
-- **⤓** — **Save this area offline** *before* you lose signal. Stay zoomed to your trip area, then save. Afterward the map, ownership, and claims still work with no service.
+- **⤓** — **Save this area offline** *before* you lose signal. Stay zoomed to your trip area, name it, then save. Afterward the map, ownership, and claims still work with no service. You can keep several saved areas; the ⤓ panel lists them (date saved, claim count, whether every map tile downloaded) with **View** and **✕ delete**. With no signal the app shows all saved areas at once, outlined with dashed orange boxes — outside those boxes there is no claim data, and the GPS banner says so instead of "Open ground".
 - **▤** — layers & legend: toggle claims, active operations, **land ownership**, geology, and your pins. This sheet also has **Verify this spot at the BLM**.
 - **Long-press the crosshair** — back up / restore your notes.
 

@@ -122,6 +122,10 @@
   .progress{height:6px;background:var(--ink);border-radius:6px;overflow:hidden;margin-top:10px;border:1px solid var(--line)}
   .progress > i{display:block;height:100%;width:0;background:var(--amber);transition:width .2s}
   .pill{display:inline-block;font-family:var(--mono);font-size:10px;padding:2px 7px;border-radius:20px;border:1px solid var(--line);color:var(--muted);margin-left:6px}
+  .area{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface2);border:1px solid var(--line);border-radius:10px}
+  .area .nm{flex:1;min-width:0;font-size:13px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .area .nm .meta{display:block;font-weight:400;font-size:10px;margin-top:2px;white-space:normal}
+  .area .btn{flex:none;padding:7px 10px;font-size:12px}
   a{color:var(--tan)}
 
   /* ── Search overlay (opens from the 🔍 button in the stack) ── */
@@ -288,12 +292,18 @@
   <div class="card">
     <div class="grip"></div>
     <h2><span class="eyebrow">Before you lose signal</span>Save this area offline</h2>
-    <p>Downloads the current map view (and a few zoom levels in) plus the claims here, so the map and claim squares still work with no service. Stay zoomed to your trip area — saving a whole state isn't practical.</p>
+    <p>Downloads the current map view (and a few zoom levels in) plus the claims, plans, mine sites and closed areas here, so they still work with no service. Stay zoomed to your trip area — saving a whole state isn't practical. You can keep several areas; each is kept until you delete it.</p>
+    <label class="fld" for="areaName">Name this area</label>
+    <input type="text" id="areaName" maxlength="60" placeholder="e.g. Tarryall Creek trip">
     <div id="offEstimate" class="meta" style="margin-top:8px"></div>
     <div class="progress" id="offProg" style="display:none"><i></i></div>
     <div class="row">
       <button class="btn primary" id="btnSaveArea">Save this area</button>
-      <button class="btn ghost" id="btnClearTiles">Clear saved maps</button>
+    </div>
+    <h2 style="margin-top:18px"><span class="eyebrow">On this device</span>Saved areas</h2>
+    <div id="areaList" class="legend"></div>
+    <div class="row">
+      <button class="btn danger" id="btnClearTiles">Delete all saved areas</button>
     </div>
     <div class="row"><button class="btn ghost" data-close>Done</button></div>
   </div>
@@ -804,24 +814,26 @@ async function refreshClaims(){
     if(wantMines) tasks.push(fetchLayer(ENDPOINTS.mines,bounds,MINE_FIELDS));
     const r=await Promise.allSettled(tasks);
     const c=r[0], p=r[1], m=wantMines? r[2]:null;
-    if(c.status==='fulfilled'){ lastClaims=c.value; claimLayer.clearLayers(); claimLayer.addData(lastClaims); saveOfflineData('claims',lastClaims); }
+    // Claims didn't load (weak signal still reports "online") — fall back to the saved areas so
+    // the map isn't left showing whatever view happened to load last. Fresh results below win.
+    if(c.status==='rejected') await showSavedData();
+    if(c.status==='fulfilled'){ savedCoverage=null; lastClaims=c.value; claimLayer.clearLayers(); claimLayer.addData(lastClaims); saveOfflineData('claims',lastClaims); }
     if(p.status==='fulfilled'){ lastPlans=p.value; planLayer.clearLayers(); planLayer.addData(lastPlans); saveOfflineData('plans',lastPlans); }
     if(m && m.status==='fulfilled'){ mineLayer.clearLayers(); mineLayer.addData(m.value); saveOfflineData('mines',m.value); }
     // A failed claims/plans request must never read as "no claims here" — say so loudly.
     const failed=[c.status==='rejected'&&'claims', p.status==='rejected'&&'plans of operations'].filter(Boolean);
     if(failed.length){
       r.forEach(x=>{ if(x.status==='rejected') console.error('BLM layer load failed:', x.reason); });
-      toast(`⚠ Couldn't load ${failed.join(' or ')} from BLM — the map may be missing claimed ground here. Try ⟳ Claims again.`, 8000);
+      toast(`⚠ Couldn't load ${failed.join(' or ')} from BLM — the map may be missing claimed ground here.`+
+        (c.status==='rejected'? ' Showing saved areas only.':'')+' Try ⟳ Claims again.', 8000);
     } else {
       const n=(lastClaims?.features?.length||0);
       toast(n? `${n} claim${n>1?'s':''} in view`: 'No claims in this view');
     }
     if(lastPos) evaluatePosition(lastPos);
   }catch(e){
-    toast('Could not reach BLM. Trying saved data…');
-    const oc=await loadOfflineData('claims'); if(oc){ claimLayer.clearLayers(); claimLayer.addData(oc); lastClaims=oc; }
-    const op=await loadOfflineData('plans'); if(op){ planLayer.clearLayers(); planLayer.addData(op); lastPlans=op; }
-    if(wantMines){ const om=await loadOfflineData('mines'); if(om){ mineLayer.clearLayers(); mineLayer.addData(om); } }
+    toast('Could not reach BLM. Showing saved areas…');
+    await showSavedData();
   }finally{ loading=false; $('#btnReload').textContent='⟳ Claims'; }
 }
 $('#btnReload').onclick=refreshClaims;
@@ -846,9 +858,9 @@ async function refreshClosed(){
   if(!map.hasLayer(closedLayer)) return;
   if(map.getZoom() < 8){ closedLayer.clearLayers(); return; }   // too coarse to be worth fetching
   const draw=d=>{ if(d){ closedLayer.clearLayers(); closedLayer.addData(d); lastClosed=d; } };
-  if(!navigator.onLine){ draw(await loadOfflineData('closed')); return; }
+  if(!navigator.onLine){ draw((await savedData()).closed); return; }
   try{ const d=await fetchClosed(); draw(d); saveOfflineData('closed',d); }
-  catch(e){ draw(await loadOfflineData('closed')); }
+  catch(e){ draw((await savedData()).closed); }
 }
 let moveT; map.on('moveend',()=>{ clearTimeout(moveT); moveT=setTimeout(()=>{ if(map.getZoom()>=11 && navigator.onLine) refreshClaims(); refreshClosed(); }, 700); });
 
@@ -872,7 +884,7 @@ $('#lyrMines').onchange =e=>{
   if(e.target.checked){
     mineLayer.addTo(map);
     if(navigator.onLine) refreshClaims();
-    else loadOfflineData('mines').then(om=>{ if(om){ mineLayer.clearLayers(); mineLayer.addData(om); } });
+    else savedData().then(d=>{ mineLayer.clearLayers(); mineLayer.addData(d.mines); });
   } else { map.removeLayer(mineLayer); }
 };
 $('#lyrSMA').onchange   =e=>{
@@ -1092,6 +1104,11 @@ function evaluatePosition(pos){
   if(op){ setStatus('op','⚠ Active operation', `Inside: ${op}`); return; }
   const cl=hitName(lastClaims,pt);
   if(cl){ setStatus('claim','⚠ Active claim', `Inside: ${cl}`); return; }
+  // Showing saved areas (offline): outside every saved box we simply have no claim data, so
+  // never call that "open ground".
+  if(savedCoverage && !savedCoverage.some(([w,s,e,n])=> pt[0]>=w && pt[0]<=e && pt[1]>=s && pt[1]<=n)){
+    setStatus('','Outside saved areas','No claim data here offline — status unknown'); return;
+  }
   setStatus('open','Open ground', lastClaims? 'No active claim at your location':'Claims not loaded here — tap ⟳ Claims');
 }
 function fmt(v,dir){ const d=Math.abs(v); return d.toFixed(5)+'° '+dir; }
@@ -1407,18 +1424,14 @@ function tilesForBounds(b, z){
 }
 function buildTileUrls(){
   const b=map.getBounds(); const z0=Math.max(map.getZoom(),11); const urls=[];
-  const baseDef=BASE[currentBase]; const maxN=baseDef.max;
-  const geoOn=map.hasLayer(geoLayer);
-  const sgmcOn=map.hasLayer(sgmcLayer);
-  const smaOn=map.hasLayer(smaLayer);
-  for(let z=z0; z<=Math.min(z0+3, maxN+2); z++){
-    const tiles=tilesForBounds(b, Math.min(z,maxN));
-    for(const t of tiles){
-      const sub='abc'[(t.x+t.y)%3];
-      urls.push(baseDef.url.replace('{z}',t.z).replace('{y}',t.y).replace('{x}',t.x).replace('{s}',sub));
-      if(geoOn) urls.push('https://tiles.macrostrat.org/carto/'+t.z+'/'+t.x+'/'+t.y+'.png');
-      if(sgmcOn) urls.push('https://mrdata.usgs.gov/mapcache/wmts/1.0.0/sgmc2/default/GoogleMapsCompatible/'+t.z+'/'+t.y+'/'+t.x+'.png');
-      if(smaOn) urls.push(SMA_URL.replace('{z}',t.z).replace('{y}',t.y).replace('{x}',t.x));
+  // Each layer is fetched only up to its own maxNativeZoom — past that Leaflet upscales the
+  // last native tile, and the server may not even have deeper ones (BLM SMA 404s past z14).
+  const layers=[baseLayer, geoLayer, sgmcLayer, smaLayer].filter(l=>map.hasLayer(l));
+  for(let z=z0; z<=z0+3; z++){
+    for(const l of layers){
+      const zz=Math.min(z, l.options.maxNativeZoom ?? z);
+      for(const t of tilesForBounds(b, zz))
+        urls.push(L.Util.template(l._url, {x:t.x, y:t.y, z:t.z, s:'abc'[(t.x+t.y)%3]}));
     }
     if(urls.length>2500) break;
   }
@@ -1426,24 +1439,155 @@ function buildTileUrls(){
 }
 function updateEstimate(){
   const n=buildTileUrls().length;
-  $('#offEstimate').textContent = `≈ ${n} map tiles for this view + the claims shown. Roughly ${Math.max(1,Math.round(n*18/1024))} MB.`;
+  $('#offEstimate').textContent = `≈ ${n} map tiles for this view + its claims, plans, mine sites & closed areas. Roughly ${Math.max(1,Math.round(n*18/1024))} MB.`;
 }
+
+// Saved areas. Each "Save this area" is its own record (key 'area:<id>' in the 'offline' store)
+// holding its bounds, its tile list, and the claims / plans / mines / closed polygons fetched for
+// exactly those bounds. They're deliberately separate from the plain 'claims'/'plans'/… keys,
+// which only mirror the last view loaded online and get overwritten on every pan — when the
+// saved area lived there too, panning anywhere after saving silently wiped the trip's claims.
+const AREA_PREFIX='area:';
+async function listAreas(){
+  if(!db) return [];
+  return (await idbAll('offline')).filter(r=>r.key.startsWith(AREA_PREFIX)).map(r=>r.val)
+    .sort((a,b)=>b.saved-a.saved);
+}
+// Everything saved on the device, merged: every saved area plus the last online view. Offline we
+// show it all at once rather than guessing which area you're in — hiding saved claims is the
+// dangerous error, and areas are small. Overlapping areas return identical features, so
+// de-duplicate on the feature itself (the GeoJSON carries no ids).
+async function savedData(){
+  const areas=await listAreas(), out={areas};
+  for(const k of ['claims','plans','mines','closed']){
+    const seen=new Set(), features=[];
+    const add=fc=>{ for(const f of (fc&&fc.features)||[]){ const id=JSON.stringify(f); if(!seen.has(id)){ seen.add(id); features.push(f); } } };
+    areas.forEach(a=>add(a[k]));
+    add(await loadOfflineData(k));
+    out[k]={type:'FeatureCollection',features};
+  }
+  return out;
+}
+// Dashed boxes around each saved area, shown while offline: outside them the map has no claim
+// data, so an empty spot there means "unknown", not "unclaimed".
+const areaOutlines=L.layerGroup();
+// Bounds of the saved areas while the claim layer shows saved data instead of a live load;
+// null once a live load succeeds. evaluatePosition uses it to avoid a false "Open ground".
+let savedCoverage=null;
+function drawAreaOutlines(areas){
+  areaOutlines.clearLayers();
+  for(const a of areas){
+    const [w,s,e,n]=a.bounds;
+    L.rectangle([[s,w],[n,e]],{color:'#e8821e',weight:2,dashArray:'8 6',fill:false,interactive:false}).addTo(areaOutlines);
+  }
+}
+async function showSavedData(){
+  const d=await savedData();
+  claimLayer.clearLayers(); claimLayer.addData(d.claims); lastClaims=d.claims;
+  planLayer.clearLayers();  planLayer.addData(d.plans);   lastPlans=d.plans;
+  mineLayer.clearLayers();  mineLayer.addData(d.mines);
+  closedLayer.clearLayers(); closedLayer.addData(d.closed); lastClosed=d.closed;
+  drawAreaOutlines(d.areas); areaOutlines.addTo(map);
+  savedCoverage=d.areas.map(a=>a.bounds);
+  if(lastPos) evaluatePosition(lastPos);
+  return d;
+}
+function offlineStatus(d){
+  if(watchId!=null) return;   // GPS banner (inside claim / outside saved areas) takes priority
+  if(!d.areas.length){ setStatus('','Offline','No saved areas — claims shown are only from your last view'); return; }
+  const oldest=new Date(Math.min(...d.areas.map(a=>a.saved))).toLocaleDateString();
+  setStatus('','Offline',`${d.areas.length} saved area${d.areas.length>1?'s':''} (claims as of ${oldest}) — no data outside the dashed boxes`);
+}
+
 let swReg=null;
 $('#btnSaveArea').onclick=async()=>{
-  if(!navigator.serviceWorker.controller){ toast('Offline cache needs the app served over https (see setup)'); return; }
-  const urls=buildTileUrls();
-  $('#offProg').style.display='block'; $('#offProg').firstElementChild.style.width='0%';
-  // ensure claims for this area are saved too
-  if(navigator.onLine) await refreshClaims();
-  navigator.serviceWorker.controller.postMessage({type:'CACHE_TILES',urls});
-  toast('Saving '+urls.length+' tiles…');
+  const btn=$('#btnSaveArea');
+  if(btn.disabled) return;
+  if(!navigator.onLine){ toast('Saving an area needs a connection'); return; }
+  if(!navigator.serviceWorker?.controller){ toast('Offline cache needs the app served over https (see setup)'); return; }
+  if(!db){ toast('Device storage is unavailable — can\'t save areas'); return; }
+  if(map.getZoom() < 10){ toast('Zoom in to your trip area first'); return; }
+  btn.disabled=true; btn.textContent='Downloading claims…';
+  try{
+    const b=map.getBounds();
+    const [c,p,m,cl]=await Promise.allSettled([
+      fetchLayer(ENDPOINTS.claims,b), fetchLayer(ENDPOINTS.plans,b),
+      fetchLayer(ENDPOINTS.mines,b,MINE_FIELDS), fetchClosed(b) ]);
+    // Never save an area whose claims didn't download — offline it would read as "no claims here".
+    if(c.status==='rejected' || p.status==='rejected'){
+      [c,p].forEach(x=>{ if(x.status==='rejected') console.error('Save area: BLM load failed:', x.reason); });
+      toast('⚠ Couldn\'t download claims from BLM — area NOT saved. Try again with better signal.', 8000);
+      return;
+    }
+    const ctr=b.getCenter(), id=Date.now().toString(36), urls=buildTileUrls();
+    const area={ id, name:$('#areaName').value.trim() || `Area near ${ctr.lat.toFixed(3)}, ${ctr.lng.toFixed(3)}`,
+      saved:Date.now(), bounds:[b.getWest(),b.getSouth(),b.getEast(),b.getNorth()],
+      tiles:urls, tilesOk:null,   // null until the service worker reports back
+      claims:c.value, plans:p.value,
+      mines: m.status==='fulfilled'? m.value:null, closed: cl.status==='fulfilled'? cl.value:null };
+    await idbPut('offline',{key:AREA_PREFIX+id, val:area});
+    $('#areaName').value='';
+    renderAreaList();
+    $('#offProg').style.display='block'; $('#offProg').firstElementChild.style.width='0%';
+    navigator.serviceWorker.controller.postMessage({type:'CACHE_TILES', id, urls});
+    toast(cl.status==='rejected'
+      ? `Saving ${urls.length} map tiles… ⚠ the closed-to-collecting overlay couldn't be downloaded for this area`
+      : `Claims saved — downloading ${urls.length} map tiles…`, cl.status==='rejected'? 8000:2600);
+  }finally{ btn.disabled=false; btn.textContent='Save this area'; }
 };
-navigator.serviceWorker?.addEventListener?.('message',ev=>{
+navigator.serviceWorker?.addEventListener?.('message',async ev=>{
   const d=ev.data||{};
   if(d.type==='CACHE_PROGRESS'){ $('#offProg').firstElementChild.style.width=Math.round(d.done/d.total*100)+'%'; }
-  if(d.type==='CACHE_DONE'){ $('#offProg').firstElementChild.style.width='100%'; toast('Area saved for offline use ✓'); }
+  if(d.type==='CACHE_DONE'){
+    $('#offProg').firstElementChild.style.width='100%';
+    const rec=d.id && db && await idbGet('offline',AREA_PREFIX+d.id);
+    if(rec){ rec.val.tilesOk=d.ok; await idbPut('offline',rec); renderAreaList(); }
+    if(d.ok<d.total) toast(`⚠ Only ${d.ok} of ${d.total} map tiles saved — the map will have gaps there. Save it again with better signal.`, 8000);
+    else toast('Area saved for offline use ✓');
+  }
 });
-$('#btnClearTiles').onclick=()=>{ navigator.serviceWorker?.controller?.postMessage({type:'CLEAR_TILES'}); toast('Saved maps cleared'); };
+
+async function renderAreaList(){
+  const el=$('#areaList'), areas=await listAreas();
+  if(!areas.length){ el.innerHTML='<div class="meta">None yet — zoom to your trip area and tap Save this area.</div>'; return; }
+  el.innerHTML=areas.map(a=>{
+    const n=(a.claims&&a.claims.features||[]).length, total=a.tiles.length;
+    const tiles = a.tilesOk==null
+      ? (Date.now()-a.saved > 10*60e3 ? '⚠ map download didn\'t finish' : 'map downloading…')
+      : a.tilesOk<total ? `⚠ ${a.tilesOk}/${total} map tiles` : `${total} map tiles`;
+    return `<div class="area" data-id="${esc(a.id)}"><div class="nm">${esc(a.name)}`+
+      `<span class="meta">${new Date(a.saved).toLocaleDateString()} · ${n} claim${n===1?'':'s'} · ${tiles}</span></div>`+
+      `<button class="btn" data-act="view">View</button><button class="btn danger" data-act="del" title="Delete">✕</button></div>`;
+  }).join('');
+}
+$('#areaList').onclick=async e=>{
+  const btn=e.target.closest('button'); if(!btn) return;
+  const id=btn.closest('.area').dataset.id;
+  const areas=await listAreas(), a=areas.find(x=>x.id===id); if(!a) return;
+  if(btn.dataset.act==='view'){
+    hideSheets();
+    drawAreaOutlines(areas); areaOutlines.addTo(map);
+    const [w,s,e2,n]=a.bounds; map.fitBounds([[s,w],[n,e2]]);
+    return;
+  }
+  if(!confirm(`Delete saved area "${a.name}"?`)) return;
+  await idbDel('offline',AREA_PREFIX+id);
+  // Only drop tiles no other saved area still uses (neighbouring areas share edge tiles).
+  const keep=new Set(areas.filter(x=>x.id!==id).flatMap(x=>x.tiles));
+  navigator.serviceWorker?.controller?.postMessage({type:'DELETE_TILES', urls:a.tiles.filter(u=>!keep.has(u))});
+  renderAreaList();
+  if(!navigator.onLine) offlineStatus(await showSavedData());
+  else drawAreaOutlines(await listAreas());
+  toast('Deleted "'+a.name+'"');
+};
+$('#btnClearTiles').onclick=async()=>{
+  const areas=await listAreas();
+  if(!confirm(areas.length? `Delete all ${areas.length} saved area${areas.length>1?'s':''} and their maps?` : 'Clear all saved map tiles?')) return;
+  for(const a of areas) await idbDel('offline',AREA_PREFIX+a.id);
+  navigator.serviceWorker?.controller?.postMessage({type:'CLEAR_TILES'});
+  areaOutlines.clearLayers(); renderAreaList();
+  toast('Saved areas deleted');
+};
 
 /* ---- Backup / restore ----------------------------------- */
 $('#btnExport').onclick=async()=>{
@@ -1472,7 +1616,7 @@ function hideSheets(){ document.querySelectorAll('.sheet').forEach(s=>s.classLis
 document.querySelectorAll('[data-close]').forEach(b=>b.onclick=hideSheets);
 document.querySelectorAll('.sheet').forEach(s=> s.addEventListener('click',e=>{ if(e.target===s) hideSheets(); }));
 $('#btnLayers').onclick=()=>showSheet('#layersSheet');
-$('#btnOffline').onclick=()=>{ updateEstimate(); showSheet('#offlineSheet'); };
+$('#btnOffline').onclick=()=>{ updateEstimate(); renderAreaList(); showSheet('#offlineSheet'); };
 
 /* ---- Verify this spot ----------------------------------- */
 function openVerify(){
@@ -1497,7 +1641,7 @@ $('#btnGps').addEventListener('touchend',()=>clearTimeout(lp));
 
 /* ---- Boot ----------------------------------------------- */
 window.addEventListener('online', ()=>{ toast('Back online'); });
-window.addEventListener('offline',()=>{ toast('Offline — using saved maps & claims'); });
+window.addEventListener('offline',async()=>{ toast('Offline — showing your saved areas'); offlineStatus(await showSavedData()); });
 loadLayerOrder();
 loadLayerOpacities();
 initLayerSort();
@@ -1510,10 +1654,7 @@ initLayerSort();
     try{ swReg=await navigator.serviceWorker.register('sw.js'); }catch(e){ console.warn('SW',e); }
   }
   if(!navigator.onLine){
-    const oc=await loadOfflineData('claims'); if(oc){ claimLayer.addData(oc); lastClaims=oc; }
-    const op=await loadOfflineData('plans');  if(op){ planLayer.addData(op);  lastPlans=op; }
-    if(map.hasLayer(mineLayer)){ const om=await loadOfflineData('mines'); if(om) mineLayer.addData(om); }
-    setStatus('','Offline','Using saved maps & claims');
+    offlineStatus(await showSavedData());
   }
   // Fill the closed-areas overlay for the opening view (online fetch, or cached when offline).
   // Deferred here so loadOfflineData/saveOfflineData are past their temporal dead zone.
