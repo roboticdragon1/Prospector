@@ -365,8 +365,8 @@ const toast = (msg, ms=2600) => { const t=$('#toast'); t.textContent=msg; t.clas
 
 /* ---- Data endpoints (public, no key) -------------------- */
 const ENDPOINTS = {
-  claims: 'https://gis.blm.gov/nlsdb/rest/services/HUB/BLM_Natl_MLRS_Mining_Claims_Not_Closed/FeatureServer/0/query',
-  plans:  'https://gis.blm.gov/nlsdb/rest/services/HUB/BLM_Natl_MLRS_Locatable_Plans_Of_Operations/FeatureServer/0/query',
+  claims: 'https://nlsdbpubgis.blm.gov/arcgishub/rest/services/HUB/BLM_Natl_MLRS_Mining_Claims_Not_Closed/FeatureServer/0/query',
+  plans:  'https://nlsdbpubgis.blm.gov/arcgishub/rest/services/HUB/BLM_Natl_MLRS_Locatable_Plans_Of_Operations/FeatureServer/0/query',
   // USGS MRDS (Mineral Resources Data System) — physical mine sites/prospects, point data w/ commodities.
   mines:  'https://services.arcgis.com/v01gqwM5QqNysAAi/ArcGIS/rest/services/Mineral_Resources_Data_System_MRDS_Compact_Version/FeatureServer/0/query'
 };
@@ -764,8 +764,17 @@ async function fetchLayer(endpoint, bounds, outFields){
     returnGeometry:'true', outSR:'4326', f:'geojson'
   });
   const res=await fetch(endpoint+'?'+params.toString());
+  return arcgisJson(res);
+}
+// ArcGIS reports service errors (e.g. a moved/retired service → "Service not found") inside an
+// HTTP 200 body as {error:{…}}. Without this check that reads as "no features", and the map
+// silently goes blank — exactly what happened when BLM moved the MLRS services to a new host.
+async function arcgisJson(res){
   if(!res.ok) throw new Error('HTTP '+res.status);
-  return res.json();
+  const d=await res.json();
+  if(d && d.error) throw new Error('ArcGIS '+(d.error.code||'')+' '+(d.error.message||'error'));
+  if(!d || !Array.isArray(d.features)) throw new Error('Unexpected response');
+  return d;
 }
 // We show every non-closed MLRS case the BLM service returns, with no extra client-side
 // filtering — that set is exactly the "is this ground legally claimed?" line we want.
@@ -798,8 +807,15 @@ async function refreshClaims(){
     if(c.status==='fulfilled'){ lastClaims=c.value; claimLayer.clearLayers(); claimLayer.addData(lastClaims); saveOfflineData('claims',lastClaims); }
     if(p.status==='fulfilled'){ lastPlans=p.value; planLayer.clearLayers(); planLayer.addData(lastPlans); saveOfflineData('plans',lastPlans); }
     if(m && m.status==='fulfilled'){ mineLayer.clearLayers(); mineLayer.addData(m.value); saveOfflineData('mines',m.value); }
-    const n=(lastClaims?.features?.length||0);
-    toast(n? `${n} claim${n>1?'s':''} in view`: 'No claims in this view');
+    // A failed claims/plans request must never read as "no claims here" — say so loudly.
+    const failed=[c.status==='rejected'&&'claims', p.status==='rejected'&&'plans of operations'].filter(Boolean);
+    if(failed.length){
+      r.forEach(x=>{ if(x.status==='rejected') console.error('BLM layer load failed:', x.reason); });
+      toast(`⚠ Couldn't load ${failed.join(' or ')} from BLM — the map may be missing claimed ground here. Try ⟳ Claims again.`, 8000);
+    } else {
+      const n=(lastClaims?.features?.length||0);
+      toast(n? `${n} claim${n>1?'s':''} in view`: 'No claims in this view');
+    }
     if(lastPos) evaluatePosition(lastPos);
   }catch(e){
     toast('Could not reach BLM. Trying saved data…');
@@ -824,8 +840,7 @@ async function fetchClosed(bounds){
     returnGeometry:'true', outSR:'4326', maxAllowableOffset:String(offset), f:'geojson'
   });
   const res=await fetch(PAD_QUERY+'?'+params.toString());
-  if(!res.ok) throw new Error('HTTP '+res.status);
-  return res.json();
+  return arcgisJson(res);
 }
 async function refreshClosed(){
   if(!map.hasLayer(closedLayer)) return;
