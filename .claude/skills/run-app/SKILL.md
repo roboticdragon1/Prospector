@@ -5,7 +5,7 @@ description: Launch and drive the Prospector map app locally in a real headless 
 
 # Run / drive Prospector locally
 
-Prospector is a single-file static PWA ([index.html](../../../index.html)) built on Leaflet. There is **no build step and no dev server** — you "run" it by serving the folder over HTTP and driving it with a headless browser. Claim, mine, land-ownership and geology data load **live from public BLM/USGS ArcGIS services**, so network is required (it works in this environment — plain `curl` reaches `gis.blm.gov`).
+Prospector is a single-file static PWA ([index.html](../../../index.html)) built on Leaflet. There is **no build step and no dev server** — you "run" it by serving the folder over HTTP and driving it with a headless browser. Claim, mine, land-ownership and geology data load **live from public BLM/USGS ArcGIS services**, so network is required (it works in this environment — plain `curl` reaches `nlsdbpubgis.blm.gov`, BLM's claims host since ~Oct 2026).
 
 ## Setup (once per machine)
 Playwright's Chromium is already cached under `~/AppData/Local/ms-playwright` (the driver auto-discovers the newest build). You only need the driver library, installed in a stable cache dir **outside the repo**:
